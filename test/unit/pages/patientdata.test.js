@@ -1928,6 +1928,34 @@ describe('PatientData', function () {
         expect(instance.getStatsByChartType()).to.eql([]);
       });
     });
+
+    context('bgSource chartPref state missing', () => {
+      beforeEach(() => {
+        wrapper.setState({
+          chartType: 'daily',
+          chartPrefs: { daily: { bgSource: undefined } },
+        });
+      });
+
+      it('should add appropriate stats when no bgSource is available', () => {
+        expect(instance.getStatsByChartType('daily')).to.eql([
+          'averageGlucose',
+          'totalInsulin',
+          'carbs',
+        ]);
+      });
+
+      it('should add appropriate stats when cbg is provided via arg', () => {
+        expect(instance.getStatsByChartType('daily', 'cbg')).to.eql([
+          'timeInRange',
+          'averageGlucose',
+          'totalInsulin',
+          'carbs',
+          'standardDev',
+          'coefficientOfVariation',
+        ]);
+      });
+    });
   });
 
   describe('getDaysByType', () => {
@@ -2704,7 +2732,7 @@ describe('PatientData', function () {
         });
 
         context('new data added', () => {
-          it('should call queryData with no arguments', () => {
+          it('should call queryData with default arguments', () => {
             const queryDataSpy = sinon.spy(instance, 'queryData');
 
             // Adding Data
@@ -2717,9 +2745,51 @@ describe('PatientData', function () {
               addingData: { inProgress: false, completed: true }
             }));
 
-            sinon.assert.callCount(queryDataSpy,1);
-            // ensure queryData called with zero args
-            sinon.assert.calledWithExactly(queryDataSpy, ...[]);
+            sinon.assert.callCount(queryDataSpy, 1);
+
+            // ensure queryData called with default args
+            sinon.assert.calledWithExactly(queryDataSpy, null,{
+              showLoading: true,
+              updateChartEndpoints: true,
+              transitioningChartType: false,
+              metaData: 'bgSources,devices,matchedDevices,excludedDevices,queryDataCount',
+              bgSource: undefined,
+            });
+          });
+
+          context('bgSource metadata newly available', () => {
+            it('should call queryData with bgSource in the `options` argument and set as chartPref to state', () => {
+              const queryDataSpy = sinon.spy(instance, 'queryData');
+
+              wrapper.setState({
+                chartType: 'daily',
+                chartPrefs: {
+                  daily: { bgSource: undefined },
+                },
+              });
+
+              // Adding Data
+              wrapper.setProps(_.assign({}, props, {
+                addingData: { inProgress: true, completed: false }
+              }));
+
+              // Completed adding data with
+              wrapper.setProps(_.assign({}, props, {
+                addingData: { inProgress: false, completed: true },
+                data: { ...props.data, metaData: { ...props.data.metaData, bgSources: { current: 'cbg' } } },
+              }));
+
+              sinon.assert.callCount(queryDataSpy, 1);
+
+              // ensure queryData called with bgSource in addition to the default args
+              sinon.assert.calledWithExactly(queryDataSpy, null,{
+                showLoading: true,
+                updateChartEndpoints: true,
+                transitioningChartType: false,
+                metaData: 'bgSources,devices,matchedDevices,excludedDevices,queryDataCount',
+                bgSource: 'cbg',
+              });
+            });
           });
 
           it('should not generate a pdf if `printDialogPDFOpts` state is not set', () => {
@@ -2896,6 +2966,24 @@ describe('PatientData', function () {
     it('should set the `loading` state to `true` if arg not provided', () => {
       instance.queryData(emptyQuery);
       sinon.assert.calledWithMatch(setStateSpy, { loading: true });
+    });
+
+    it('should set the `bgSource` query to `options.bgSource` arg, if provided, otherwise use the bgSource from chartPrefs state', () => {
+      wrapper.setState({
+        chartType: 'daily',
+        chartPrefs: { daily: {  bgSource: 'cbg' } }
+      });
+
+      instance.queryData(emptyQuery, {});
+      sinon.assert.calledWithMatch(defaultProps.dataWorkerQueryDataRequest, { bgSource: 'cbg' });
+
+      defaultProps.dataWorkerQueryDataRequest.resetHistory();
+      wrapper.setState({
+        queryingData: false,
+      });
+
+      instance.queryData(emptyQuery, { bgSource: 'smbg' });
+      sinon.assert.calledWithMatch(defaultProps.dataWorkerQueryDataRequest, { bgSource: 'smbg' });
     });
 
     it('should set the `metaData` query to `options.metaData` arg', () => {
@@ -4163,27 +4251,32 @@ describe('PatientData', function () {
     let instance;
     let props;
     let setStateSpy;
+    let logSpy;
 
     beforeEach(() => {
       props = _.assign({}, defaultProps, {
         onFetchEarlierData: sinon.stub(),
+        trackMetric: sinon.stub(),
+        log: sinon.stub(),
       });
-
 
       wrapper = shallow(<PatientDataClass {...props} />);
       instance = wrapper.instance();
 
       setStateSpy = sinon.spy(instance, 'setState');
+      logSpy = sinon.spy(instance, 'log');
     });
 
     afterEach(() => {
       props.onFetchEarlierData.reset();
       props.trackMetric.reset();
       setStateSpy.resetHistory();
+      logSpy.resetHistory();
     });
 
     after(() => {
       setStateSpy.restore();
+      logSpy.restore();
     });
 
     context('currently fetching data', () => {
@@ -4225,6 +4318,7 @@ describe('PatientData', function () {
           medtronic: undefined,
           initial: false,
           useCache: false,
+          noDates: false,
         }, '40');
       });
 
@@ -4363,6 +4457,58 @@ describe('PatientData', function () {
           patientID: 'otherPatientId',
           clinicId: 'clinic123',
         });
+      });
+
+      it('should set startDate and endDate to undefined if noDates is true', () => {
+        const fetchedUntil = '2018-01-01T00:00:00.000Z';
+
+        wrapper.setProps({
+          currentPatientInViewId: '40',
+          data: {
+            fetchedUntil,
+          },
+        });
+
+        const options = {
+          noDates: true,
+        };
+
+        instance.fetchEarlierData(options);
+
+        sinon.assert.calledOnce(props.onFetchEarlierData);
+        sinon.assert.calledWithMatch(props.onFetchEarlierData, {
+          startDate: undefined,
+          endDate: undefined,
+        }, '40');
+      });
+
+      it('should call the log method', () => {
+        instance.fetchEarlierData();
+
+        sinon.assert.calledOnce(logSpy);
+        sinon.assert.calledWith(logSpy, 'fetching');
+      });
+
+      it('should pass the initial option correctly', () => {
+        const fetchedUntil = '2018-01-01T00:00:00.000Z';
+
+        wrapper.setProps({
+          currentPatientInViewId: '40',
+          data: {
+            fetchedUntil,
+          },
+        });
+
+        const options = {
+          initial: true,
+        };
+
+        instance.fetchEarlierData(options);
+
+        sinon.assert.calledOnce(props.onFetchEarlierData);
+        sinon.assert.calledWithMatch(props.onFetchEarlierData, {
+          initial: true,
+        }, '40');
       });
     });
   });
@@ -4755,6 +4901,7 @@ describe('PatientData', function () {
             fullName: 'Fooey McBar'
           }
         },
+        onFetchEarlierData: sinon.stub(),
         fetchingPatient: false,
         fetchingPatientData: false,
         fetchingUser: false,
@@ -4766,16 +4913,26 @@ describe('PatientData', function () {
       var elem = mount(<PatientData {...props} />).find(PatientDataClass);
 
       var callCount = props.trackMetric.callCount;
+      elem.instance().setState({
+        endpoints: [100,200],
+      });
       elem.instance().handleSwitchToSettings();
-      expect(props.trackMetric.callCount).to.equal(callCount + 1);
+      expect(props.trackMetric.callCount).to.equal(callCount + 2);
       expect(props.trackMetric.calledWith('Clicked Switch To Settings')).to.be.true;
     });
 
     it('should set the `chartType` state to `settings`', () => {
-      const wrapper = shallow(<PatientDataClass {...defaultProps} />);
+      var props = {
+        ...defaultProps,
+        onFetchEarlierData: sinon.stub(),
+      };
+      const wrapper = shallow(<PatientDataClass {...props} />);
       const instance = wrapper.instance();
 
-      wrapper.setState({chartType: 'daily'});
+      wrapper.setState({
+        chartType: 'daily',
+        endpoints: [100,200],
+      });
 
       instance.handleSwitchToSettings();
       expect(wrapper.state('chartType')).to.equal('settings');

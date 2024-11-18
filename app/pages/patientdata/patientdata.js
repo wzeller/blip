@@ -59,6 +59,7 @@ import { Box, Flex } from 'theme-ui';
 import Checkbox from '../../components/elements/Checkbox';
 import PopoverLabel from '../../components/elements/PopoverLabel';
 import { Paragraph2 } from '../../components/elements/FontStyles';
+import { DIABETES_DATA_TYPES } from '../../core/constants';
 
 const { Loader } = vizComponents;
 const { getLocalizedCeiling, getTimezoneFromTimePrefs } = vizUtils.datetime;
@@ -1245,9 +1246,17 @@ export const PatientDataClass = createReactClass({
     this.props.trackMetric('Clicked Switch To Settings', {
       fromChart: this.state.chartType
     });
+
     if (e) {
       e.preventDefault();
     }
+
+    this.fetchEarlierData({
+      returnData: false,
+      showLoading: true,
+      noDates: true,
+      type: 'pumpSettings,upload',
+    });
 
     this.updateChart('settings');
   },
@@ -1299,7 +1308,7 @@ export const PatientDataClass = createReactClass({
     }
 
     // Prior to refetching data, we need to remove current data from the data worker
-    // Refetch will occur in UNSAFE_componentWillRecieveProps after data worker is emptied
+    // Refetch will occur in UNSAFE_componentWillReceiveProps after data worker is emptied
     this.props.dataWorkerRemoveDataRequest(null, this.props.currentPatientInViewId);
   },
 
@@ -1411,9 +1420,10 @@ export const PatientDataClass = createReactClass({
     return aggregations;
   },
 
-  getStatsByChartType: function(chartType = this.state.chartType) {
-    const cbgSelected = _.get(this.state.chartPrefs, [chartType, 'bgSource']) === 'cbg';
-    const smbgSelected = _.get(this.state.chartPrefs, [chartType, 'bgSource']) === 'smbg';
+  getStatsByChartType: function(chartType = this.state.chartType, bgSource) {
+    const currentBgSource = bgSource || _.get(this.state.chartPrefs, [chartType, 'bgSource']);
+    const cbgSelected =  currentBgSource === 'cbg';
+    const smbgSelected = currentBgSource === 'smbg';
     const isAutomatedBasalDevice = _.get(this.props.data, 'metaData.latestPumpUpload.isAutomatedBasalDevice');
     const isSettingsOverrideDevice = _.get(this.props.data, 'metaData.latestPumpUpload.isSettingsOverrideDevice');
 
@@ -1674,7 +1684,7 @@ export const PatientDataClass = createReactClass({
           endpoints: undefined,
           refreshChartType: this.state.chartType,
         }, () => {
-          this.props.onRefresh(this.props.currentPatientInViewId);
+          this.props.onRefresh(this.props.currentPatientInViewId, this.state.refreshChartType);
           this.props.removeGeneratedPDFS();
         });
       });
@@ -1703,8 +1713,7 @@ export const PatientDataClass = createReactClass({
       // Set timePrefs to state
       let timePrefs = this.state.timePrefs;
       if (_.isEmpty(timePrefs)) {
-        const latestUpload = _.get(nextProps, 'data.metaData.latestDatumByType.upload');
-        timePrefs = utils.getTimePrefsForDataProcessing(latestUpload, this.props.queryParams);
+        timePrefs = utils.getTimePrefsForDataProcessing(this.getMetaData('latestTimeZone', null, nextProps), this.props.queryParams);
         stateUpdates.timePrefs = timePrefs;
       }
 
@@ -1774,8 +1783,21 @@ export const PatientDataClass = createReactClass({
 
       const newDataAdded = this.props.addingData.inProgress && nextProps.addingData.completed;
       if (newDataAdded) {
+        const nextBgSource = _.get(nextProps, 'data.metaData.bgSources.current');
+        const queryOpts = {}
+
+        if (nextBgSource && this.state.chartType && _.isEmpty(_.get(this.state.chartPrefs, [this.state.chartType, 'bgSource']))) {
+          // If this is the first data fetch that contained bg data, we check for it and set the
+          // bgSource state accordingly to allow generating all appropriate stats
+          this.updateChartPrefs({
+            [this.state.chartType]: { ...this.state.chartPrefs[this.state.chartType], bgSource: nextBgSource },
+          }, false, false);
+
+          queryOpts.bgSource = nextBgSource;
+        }
+
         // New data has been added. Let's query it to update the chart.
-        this.queryData();
+        this.queryData(null, queryOpts);
 
         // If new data was fetched to support requested PDF dates, kick off pdf generation.
         if (this.state.printDialogPDFOpts) {
@@ -1866,13 +1888,14 @@ export const PatientDataClass = createReactClass({
       updateChartEndpoints: options.updateChartEndpoints || !this.state.chartEndpoints,
       transitioningChartType: false,
       metaData: 'bgSources,devices,matchedDevices,excludedDevices,queryDataCount',
+      bgSource: _.get(this.state, ['chartPrefs', this.state.chartType, 'bgSource']),
     });
 
     if (this.state.queryingData) return;
     this.setState({ loading: options.showLoading, queryingData: true });
 
     let chartQuery = {
-      bgSource: _.get(this.state, ['chartPrefs', this.state.chartType, 'bgSource']),
+      bgSource: options.bgSource,
       chartType: this.state.chartType,
       excludedDevices: _.get(this.state, 'chartPrefs.excludedDevices', []),
       excludeDaysWithoutBolus: _.get(this.state, ['chartPrefs', this.state.chartType, 'stats', 'excludeDaysWithoutBolus']),
@@ -1936,11 +1959,19 @@ export const PatientDataClass = createReactClass({
 
           chartQuery.aggregationsByDate = 'boluses';
           break;
+
+        case 'settings':
+          chartQuery.types = {
+            pumpSettings: {},
+            upload: {},
+          };
+          chartQuery.endpoints[0] = 0;
+          break;
       }
 
       const { next: nextDays, prev: prevDays } = this.getDaysByType();
 
-      chartQuery.stats = this.getStatsByChartType();
+      chartQuery.stats = this.getStatsByChartType(this.state.chartType, options.bgSource);
       chartQuery.nextDays = nextDays;
       chartQuery.prevDays = prevDays;
 
@@ -2047,6 +2078,27 @@ export const PatientDataClass = createReactClass({
     }
   },
 
+/**
+ * Fetches earlier data for the current patient.
+ *
+ * This function is responsible for fetching earlier data for the patient currently in view.
+ * It checks if data is already being fetched and returns early if so. Otherwise, it constructs
+ * the options for the data fetch, updates the component state to indicate loading, logs the
+ * fetching action, and triggers the data fetch via the `onFetchEarlierData` prop.
+ *
+ * @param {Object} [options={}] - Optional configuration object for the data fetch.
+ * @param {boolean} [options.showLoading=true] - Whether to show the loading indicator.
+ * @param {string} [options.startDate] - The start date for the data fetch. Defaults to 16 weeks before the earliest requested data.
+ * @param {string} [options.endDate] - The end date for the data fetch. Defaults to 1 millisecond before the earliest requested data.
+ * @param {boolean} [options.carelink=this.props.carelink] - Whether to include Carelink data.
+ * @param {boolean} [options.dexcom=this.props.dexcom] - Whether to include Dexcom data.
+ * @param {boolean} [options.medtronic=this.props.medtronic] - Whether to include Medtronic data.
+ * @param {boolean} [options.useCache=false] - Whether to use cached data.
+ * @param {boolean} [options.initial=false] - Whether this is the initial data fetch.
+ * @param {boolean} [options.noDates=false] - Whether to fetch data without start and end dates..
+ *
+ * @returns {void}
+ */
   fetchEarlierData: function(options = {}) {
     // Return if we are currently fetching data
     if (this.props.fetchingPatientData) {
@@ -2064,7 +2116,13 @@ export const PatientDataClass = createReactClass({
       medtronic: this.props.medtronic,
       useCache: false,
       initial: false,
+      noDates: false,
     });
+
+    if (fetchOpts.noDates) {
+      fetchOpts.startDate = undefined;
+      fetchOpts.endDate = undefined;
+    }
 
     const count = this.state.fetchEarlierDataCount + 1;
 
@@ -2319,7 +2377,22 @@ let mergeProps = (stateProps, dispatchProps, ownProps) => {
     fetchers: getFetchers(dispatchProps, ownProps, stateProps, api, { carelink, dexcom, medtronic }),
     history: ownProps.history,
     uploadUrl: api.getUploadUrl(),
-    onRefresh: dispatchProps.fetchPatientData.bind(null, api, { carelink, dexcom, medtronic }),
+    onRefresh: (patientId, chartType) => {
+      const fetchOptions = {
+        carelink,
+        dexcom,
+        medtronic
+      };
+      if(chartType === 'settings') {
+        _.extend(fetchOptions, {
+          type: 'pumpSettings,upload',
+          initial: false,
+          startDate: undefined,
+          endDate: undefined,
+        });
+      }
+      return dispatchProps.fetchPatientData(api, fetchOptions, patientId);
+    },
     onFetchMessageThread: dispatchProps.fetchMessageThread.bind(null, api),
     onCloseMessageThread: dispatchProps.closeMessageThread,
     onSaveComment: api.team.replyToMessageThread.bind(api),

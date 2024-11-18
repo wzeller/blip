@@ -2,6 +2,7 @@
 //  * Copy this file to `config/local.js` and update as needed
 //  */
 
+<<<<<<< HEAD
 // /**
 //  * Uncomment any linkedPackages as desired to link them for local development.
 //  *

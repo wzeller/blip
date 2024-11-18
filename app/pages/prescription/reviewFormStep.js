@@ -3,29 +3,35 @@ import PropTypes from 'prop-types';
 import { withTranslation } from 'react-i18next';
 import { FastField, useFormikContext } from 'formik';
 import { Box, Flex, BoxProps } from 'theme-ui';
-import bows from 'bows';
 import compact from 'lodash/compact';
 import find from 'lodash/find';
-import flattenDeep from 'lodash/flattenDeep';
 import get from 'lodash/get';
+import includes from 'lodash/includes';
 import isEmpty from 'lodash/isEmpty';
 import map from 'lodash/map';
+import reject from 'lodash/reject';
 import capitalize from 'lodash/capitalize';
+import trim from 'lodash/trim';
 import isArray from 'lodash/isArray';
+import CheckRoundedIcon from '@material-ui/icons/CheckRounded';
 import EditRoundedIcon from '@material-ui/icons/EditRounded';
 import FileCopyRoundedIcon from '@material-ui/icons/FileCopyRounded';
+import PrintRoundedIcon from '@material-ui/icons/PrintRounded';
 import { components as vizComponents } from '@tidepool/viz';
 
-import { fieldsAreValid, getThresholdWarning, getFieldError } from '../../core/forms';
+import { getThresholdWarning, getFieldError } from '../../core/forms';
 import { useInitialFocusedInput } from '../../core/hooks';
-import { dateRegex, insulinModelOptions, stepValidationFields, warningThresholds } from './prescriptionFormConstants';
+import { cgmDeviceOptions, dateRegex, getFieldStepMap, insulinModelOptions, pumpDeviceOptions, warningThresholds } from './prescriptionFormConstants';
 import i18next from '../../core/language';
 import { convertMsPer24ToTimeString } from '../../core/datetime';
+import personUtils from '../../core/personutils';
+import { useToasts } from '../../providers/ToastProvider';
 import { Body1, Headline, Paragraph1 } from '../../components/elements/FontStyles';
 import Checkbox from '../../components/elements/Checkbox';
 import Icon from '../../components/elements/Icon';
 import baseTheme from '../../themes/baseTheme';
 import PopoverLabel from '../../components/elements/PopoverLabel';
+import Button from '../../components/elements/Button';
 
 import {
   fieldsetStyles,
@@ -34,7 +40,6 @@ import {
 
 const { ClipboardButton } = vizComponents;
 const t = i18next.t.bind(i18next);
-const log = bows('PrescriptionReview');
 
 const fieldsetPropTypes = {
   ...BoxProps,
@@ -44,54 +49,103 @@ const fieldsetPropTypes = {
 
 const emptyValueText = t('Not specified');
 
-const patientRows = (values, formikContext) => {
-  return [
+const patientRows = (devices, formikContext, skippedFields = [], fieldStepMap = {}) => {
+  const { values } = formikContext;
+  const pumpDevices = pumpDeviceOptions(devices);
+  const cgmDevices = cgmDeviceOptions(devices);
+  const skipDeviceSelection = cgmDevices.length === 1 && pumpDevices.length === 1;
+  const pumpId = get(values, 'initialSettings.pumpId');
+  const pump = find(devices.pumps, { id: pumpId })
+  const cgmId = get(values, 'initialSettings.cgmId');
+  const cgm = find(devices.cgms, { id: cgmId });
+
+  const rows = [
     {
       label: t('Email'),
       value: get(values, 'email', emptyValueText),
       error: getFieldError('email', formikContext, true),
-      step: [0, 2],
+      initialFocusedInput: 'email',
+      step: fieldStepMap.email,
     },
     {
       label: t('Mobile Number'),
       value: get(values, 'phoneNumber.number', emptyValueText),
-      error: getFieldError('phoneNumber.number', formikContext, true),
-      step: [1, 0],
+      error: get(values, 'phoneNumber.number') && getFieldError('phoneNumber.number', formikContext, true),
+      skipped: includes(skippedFields, 'phoneNumber'),
+      step: fieldStepMap['phoneNumber.number'],
     },
     {
       label: t('Type of Account'),
       value: get(values, 'accountType') ? capitalize(values.accountType) : emptyValueText,
       error: getFieldError('accountType', formikContext, true),
-      step: [0, 0],
+      step: fieldStepMap.accountType,
     },
     {
       label: t('Birthdate'),
       value: get(values, 'birthday', emptyValueText).replace(dateRegex, '$2/$3/$1'),
       error: getFieldError('birthday', formikContext, true),
-      step: [0, 1],
       initialFocusedInput: 'birthday',
+      step: fieldStepMap.birthday,
     },
     {
       label: t('Gender'),
       value: get(values, 'sex') ? capitalize(values.sex) : emptyValueText,
       error: getFieldError('sex', formikContext, true),
-      step: [1, 2],
+      step: fieldStepMap.sex,
     },
     {
       label: t('MRN'),
       value: get(values, 'mrn', emptyValueText),
       error: getFieldError('mrn', formikContext, true),
-      step: [1, 1],
+      skipped: includes(skippedFields, 'mrn'),
+      step: fieldStepMap.mrn,
+    },
+    {
+      label: t('Insulin Pump'),
+      value: get(pump, 'displayName', emptyValueText),
+      error: getFieldError('mrn', formikContext, true),
+      initialFocusedInput: 'initialSettings.pumpId',
+      skipped: skipDeviceSelection || includes(skippedFields, 'initialSettings.pumpId'),
+      step: fieldStepMap['initialSettings.pumpId'],
+    },
+    {
+      label: t('Continuous Glucose Monitor'),
+      value: get(cgm, 'displayName', emptyValueText),
+      error: getFieldError('initialSettings.cgmId', formikContext, true),
+      initialFocusedInput: 'initialSettings.cgmId',
+      skipped: skipDeviceSelection || includes(skippedFields, 'initialSettings.cgmId'),
+      step: fieldStepMap['initialSettings.cgmId'],
+    },
+    {
+      label: t('Activation Code'),
+      value: get(values, 'accessCode', emptyValueText),
+      skipped: values?.state !== 'submitted',
     },
   ];
+
+  if (values.accountType === 'caregiver') {
+    const fullName = personUtils.fullnameFromSplitNames(values.caregiverFirstName, values.caregiverLastName);
+
+    rows.splice(3, 0, {
+      label: t('Caregiver Name'),
+      value: isEmpty(trim(fullName)) ? emptyValueText : fullName,
+      error: getFieldError('caregiverFirstName', formikContext, true) || getFieldError('caregiverLastName', formikContext, true) || isEmpty(values.caregiverFirstName) || isEmpty(values.caregiverLastName),
+      initialFocusedInput: 'caregiverFirstName',
+      step: fieldStepMap.caregiverFirstName,
+    });
+  }
+
+  return reject(rows, { skipped: true });
 };
 
-const therapySettingsRows = (pump, formikContext) => {
+const therapySettingsRows = (devices, formikContext, skippedFields = []) => {
   const { values } = formikContext;
   const bgUnits = get(values, 'initialSettings.bloodGlucoseUnits');
+  const pumpId = get(values, 'initialSettings.pumpId');
+  const pump = find(devices.pumps, { id: pumpId });
   const thresholds = warningThresholds(pump, bgUnits, values);
 
-  return [
+  const rows = [
     {
       id: 'cpt-training',
       label: t('CPT Training Required'),
@@ -100,6 +154,7 @@ const therapySettingsRows = (pump, formikContext) => {
         return values.training === 'inModule' ? t('Not required') : t('Required');
       })(),
       error: getFieldError('training', formikContext, true),
+      skipped: includes(skippedFields, 'training'),
     },
     {
       id: 'glucose-safety-limit',
@@ -285,20 +340,25 @@ const therapySettingsRows = (pump, formikContext) => {
       ),
     },
   ];
+
+  return reject(rows, { skipped: true });
 };
 
 export const PatientInfo = props => {
   const {
     t,
+    currentStep,
+    devices,
+    fieldStepMap,
     handlers: { activeStepUpdate },
     isEditable,
+    skippedFields,
     ...themeProps
   } = props;
 
   const initialFocusedInputRef = useInitialFocusedInput();
 
-  const nameStep = [0, 1];
-  const currentStep = [4, 0];
+  const nameStep = fieldStepMap.firstName;
   const formikContext = useFormikContext();
 
   const { values } = formikContext;
@@ -309,14 +369,14 @@ export const PatientInfo = props => {
   } = values;
 
   const patientName = [firstName, lastName].join(' ');
-  const rows = patientRows(values, formikContext);
+  const rows = patientRows(devices, formikContext, skippedFields, fieldStepMap);
 
   const Row = ({ label, value, step, initialFocusedInput, error }) => (
     <Flex mb={4} sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
       <Body1>{label}</Body1>
       <Box>
         <Flex sx={{ alignItems: 'center' }}>
-          <Body1 mr={3} color={(isEditable && error) ? 'feedback.danger' : 'text.primary'}>{value}</Body1>
+          <Body1 mr={3} sx={{ color: (isEditable && error) ? 'feedback.danger' : 'text.primary' }}>{value}</Body1>
           {isEditable && <Icon
             variant="button"
             icon={EditRoundedIcon}
@@ -352,15 +412,24 @@ PatientInfo.propTypes = fieldsetPropTypes;
 export const TherapySettings = props => {
   const {
     t,
-    handlers: { activeStepUpdate, generateTherapySettingsOrderText, handleCopyTherapySettingsClicked },
+    currentStep,
+    devices,
+    fieldStepMap,
+    handlers: {
+      activeStepUpdate,
+      generateTherapySettingsOrderText,
+      handleCopyTherapySettingsClicked,
+      handlePrintTherapySettingsClicked,
+    },
     isEditable,
-    pump,
+    skippedFields,
     ...themeProps
   } = props;
 
-  const therapySettingsStep = [3, 0];
-  const currentStep = [4, 0];
+  const therapySettingsStep = fieldStepMap['initialSettings.basalRateSchedule'];
 
+  const [copying, setCopying] = React.useState(false);
+  const [printing, setPrinting] = React.useState(false);
   const formikContext = useFormikContext();
   const { values } = formikContext;
 
@@ -371,7 +440,7 @@ export const TherapySettings = props => {
 
   const patientName = [firstName, lastName].join(' ');
 
-  const rows = therapySettingsRows(pump, formikContext);
+  const rows = therapySettingsRows(devices, formikContext, skippedFields);
 
   const Row = ({ label, value, warning, id, index, error }) => {
     let rowValues = isArray(value) ? value : [value];
@@ -395,15 +464,15 @@ export const TherapySettings = props => {
           alignItems: 'flex-start',
         }}
       >
-        <Body1 flex="1">{label}</Body1>
-        <Box flex="1">
+        <Body1 sx={{ flex: '1' }}>{label}</Body1>
+        <Box sx={{ flex: '1' }}>
           {map(rowValues, (val, i) => (
             <Flex key={i}>
-              <Body1 color={valueColor(i)} key={i} sx={{ flexGrow: 1 }}>{val}</Body1>
+              <Body1  key={i} sx={{ flexGrow: 1, color: valueColor(i) }}>{val}</Body1>
               {errors[i] && (
                 <PopoverLabel
                   id={`${id}-${i}`}
-                  width="auto"
+                  sx={{ width: 'auto' }}
                   popoverContent={(
                     <Box p={3}>
                       {map(compact(isArray(errors[i]) ? errors[i] : [errors[i]]), (message, i) => <Paragraph1 key={i}>{message}</Paragraph1>)}
@@ -414,7 +483,7 @@ export const TherapySettings = props => {
               {!errors[i] && warnings[i] && (
                 <PopoverLabel
                   id={`${id}-${i}`}
-                  width="auto"
+                  sx={{ width: 'auto' }}
                   popoverContent={(
                     <Box p={3}>
                       {map(compact(isArray(warnings[i]) ? warnings[i] : [warnings[i]]), (message, i) => <Paragraph1 key={i}>{message}</Paragraph1>)}
@@ -437,59 +506,125 @@ export const TherapySettings = props => {
 
   return (
     <Box {...themeProps}>
-      <Flex mb={3} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+      <Flex mb={5} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
         <Headline mr={2}>{title}</Headline>
-        <Box
+        <Flex
           theme={baseTheme}
           sx={{
-            button: {
-              border: 'none',
-              color: 'text.primary',
-              paddingRight: 0,
-              '&:hover,&:active': {
-                border: 'none',
-                color: 'text.primary',
-                backgroundColor: 'transparent',
-              },
-            },
-            '.success': {
-              padding: '.25em 0 0',
-              display: 'block',
-              fontSize: '1.5em',
-              textAlign: 'center',
-              lineHeight: '1.125em',
-            },
+            columnGap: 2,
+            alignItems: 'center',
           }}
         >
-          {isEditable && <Icon
-            variant="button"
-            icon={EditRoundedIcon}
-            label={t('Edit therapy settings')}
-            title={t('Edit therapy settings')}
-            onClick={() => activeStepUpdate(therapySettingsStep, currentStep)}
-          />}
+          {isEditable && (
+            <Button
+              id="edit-therapy-settings"
+              variant="secondaryCondensed"
+              icon={EditRoundedIcon}
+              iconPosition="left"
+              iconFontSize="15px"
+              label={t('Edit therapy settings')}
+              onClick={() => activeStepUpdate(therapySettingsStep, currentStep)}
+            >
+              {t('Edit')}
+            </Button>
+          )}
 
-          <ClipboardButton
-            buttonTitle={t('Copy therapy settings order as text')}
-            buttonText={(
-              <Icon
-                variant="static"
-                icon={FileCopyRoundedIcon}
-                label={t('Copy therapy settings order as text')}
-                title={t('Copy therapy settings order as text')}
-              />
-            )}
-            successText={<span className="success">{t('✓')}</span>}
-            onClick={handleCopyTherapySettingsClicked}
-            getText={generateTherapySettingsOrderText.bind(null, [
-              {
-                label: t('Name'),
-                value: patientName,
-              },
-              ...patientRows(values, formikContext),
-            ], therapySettingsRows(pump, formikContext))}
-          />
-        </Box>
+          {!isEditable && (
+            <Button
+              id="print-therapy-settings-order"
+              variant="primaryCondensed"
+              icon={PrintRoundedIcon}
+              iconPosition="left"
+              iconFontSize="15px"
+              label={t('Print therapy settings order')}
+              processing={printing}
+              onClick={() => {
+                setPrinting(true);
+
+                handlePrintTherapySettingsClicked(
+                  [
+                    {
+                      label: t('Name'),
+                      value: patientName,
+                    },
+                    ...patientRows(devices, formikContext, skippedFields, fieldStepMap),
+                  ],
+                  therapySettingsRows(devices, formikContext, skippedFields),
+                  pdf => {
+                    setPrinting(false);
+
+                    if (pdf?.prescription?.url) {
+                      if (self.printWindowRef && !self.printWindowRef.closed) {
+                        // If we already have a ref to a PDF window, (re)use it
+                        self.printWindowRef.location.href = pdf.prescription.url;
+                      } else {
+                        // Otherwise, we create and open a new PDF window ref.
+                        self.printWindowRef = window.open(pdf.prescription.url);
+                      }
+
+                      setTimeout(() => {
+                        if (self.printWindowRef) {
+                          self.printWindowRef.focus();
+                          self.printWindowRef.print();
+                        }
+                      }, 100);
+                    }
+                  }
+                );
+              }}
+            >
+              {t('Print')}
+            </Button>
+          )}
+
+          <Button
+            p={0}
+            id="copy-therapy-settings-order"
+            variant="secondaryCondensed"
+            icon={copying ? CheckRoundedIcon : FileCopyRoundedIcon}
+            iconPosition="left"
+            iconFontSize={copying ? '16px' : '14px'}
+            label={t('Copy therapy settings order as text')}
+            sx={{
+              '.icon': { position: 'absolute', left: '16px' },
+              button: {
+                fontSize: 0,
+                borderColor: 'transparent',
+                x: 0,
+                y: 0,
+                color: 'text.primary',
+                '&:hover,&:active': {
+                  borderColor: 'transparent',
+                  color: 'text.primary',
+                  backgroundColor: 'transparent',
+                },
+                py: '6px',
+                pr: '16px',
+                pl: '38px',
+              }
+            }}
+          >
+            <ClipboardButton
+              buttonTitle={t('Copy therapy settings order as text')}
+              buttonText={t('Copy as Text')}
+              successText={t('Copy as Text')}
+              onClick={() => {
+                setCopying(true);
+                handleCopyTherapySettingsClicked();
+              }}
+              onComplete={() => {
+                setCopying(false);
+              }}
+              getText={generateTherapySettingsOrderText.bind(null, [
+                {
+                  label: t('Name'),
+                  value: patientName,
+                },
+                ...patientRows(devices, formikContext, skippedFields, fieldStepMap),
+              ], therapySettingsRows(devices, formikContext, skippedFields))}
+            />
+          </Button>
+        </Flex>
       </Flex>
 
       <Box mb={4} as={Body1}>{subtitle}</Box>
@@ -516,6 +651,15 @@ export const TherapySettings = props => {
 TherapySettings.propTypes = fieldsetPropTypes;
 
 export const PrescriptionReview = withTranslation()(props => {
+  const stepperId = 'prescription-form-steps';
+  const params = () => new URLSearchParams(location.search);
+  const activeStepParamKey = `${stepperId}-step`;
+  const activeStepsParam = params().get(activeStepParamKey);
+  const activeStep = activeStepsParam ? parseInt(activeStepsParam.split(',')[0], 10) : undefined;
+  const activeSubStep = activeStepsParam ? parseInt(activeStepsParam.split(',')[1], 10) : undefined;
+  const currentStep = [activeStep, activeSubStep];
+  const fieldStepMap = getFieldStepMap(props.steps);
+
   const { validateForm, values } = useFormikContext();
 
   // At this point we consider the prescription ready to send so we ensure the values are validated
@@ -526,42 +670,45 @@ export const PrescriptionReview = withTranslation()(props => {
 
   return (
     <Flex
-      sx={{ flexWrap: 'wrap' }}
-      margin="auto"
-      maxWidth="1280px"
+      id="prescription-review-step"
+      sx={{
+        flexWrap: 'wrap',
+        margin: 'auto',
+        maxWidth: '1280px',
+      }}
     >
       <PatientInfo
         {...fieldsetStyles}
         flex="0 0 auto"
-        alignSelf="flex-start"
         mb={4}
         px={4}
         py={3}
-        width={[1, 1, 0.45, 0.35]}
         sx={{
+          ...fieldsetStyles.sx,
+          alignSelf: 'flex-start',
+          flex: '0 0 auto',
+          width: ['100%', null, '45%', '35%'],
           border: 'default',
         }}
+        currentStep={currentStep}
+        fieldStepMap={fieldStepMap}
         {...props}
       />
       <TherapySettings
         {...fieldsetStyles}
-        flex="0 0 auto"
         mb={4}
         pr={[4, 4, 0, 0]}
         pl={[4, 4, 5, 7]}
         pb={3}
-        width={[1, 1, 0.55, 0.65]}
+        sx={{
+          ...fieldsetStyles.sx,
+          flex: '0 0 auto',
+          width: ['100%', null, '55%', '65%'],
+        }}
+        currentStep={currentStep}
+        fieldStepMap={fieldStepMap}
         {...props}
       />
     </Flex>
   );
 });
-
-const reviewFormStep = (schema, pump, handlers, values, isEditable) => ({
-  label: t('Review and Save Prescription'), // TODO: [Save | Send] depending on clinician role once implemented in backend
-  completeText: t('Save Prescription'), // TODO: [Save | Send] depending on clinician role once implemented in backend
-  disableComplete: !fieldsAreValid(flattenDeep(stepValidationFields), schema, values),
-  panelContent: <PrescriptionReview pump={pump} handlers={handlers} isEditable={isEditable} />
-});
-
-export default reviewFormStep;

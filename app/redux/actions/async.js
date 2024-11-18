@@ -1229,11 +1229,15 @@ export function fetchPatientData(api, options, id) {
  * @param  {Object} api - an instance of the API wrapper
  * @param {String} clinicId - Id of the clinic
  */
-export function fetchClinicPrescriptions(api, clinicId) {
+export function fetchClinicPrescriptions(api, clinicId, options = {}) {
+  _.defaults(options, {
+    size: 1000,
+  });
+
   return (dispatch) => {
     dispatch(sync.fetchClinicPrescriptionsRequest());
 
-    api.prescription.getAllForClinic(clinicId, (err, prescriptions) => {
+    api.prescription.getAllForClinic(clinicId, options, (err, prescriptions) => {
       if (err) {
         dispatch(sync.fetchClinicPrescriptionsFailure(
           createActionError(ErrorMessages.ERR_FETCHING_CLINIC_PRESCRIPTIONS, err), err
@@ -2930,8 +2934,7 @@ export function deleteClinicPatientTag(api, clinicId, patientTagId) {
  * @param {Object} [options] - report config options
  * @param {Number} [options.period] - period to sort by (1d|7d|14d|30d)
  * @param {Array} [options.tags] - Array of patient tag IDs
- * @param {Number} [options.lastUploadDateFrom] - ISO date for start of last upload date filter range
- * @param {Number} [options.lastUploadDateTo] - ISO date for end of last upload date filter range
+ * @param {Number} [options.lastDataCutoff] - ISO date for data recency cutoff date
  */
  export function fetchTideDashboardPatients(api, clinicId, options) {
   return (dispatch) => {
@@ -2943,6 +2946,7 @@ export function deleteClinicPatientTag(api, clinicId, patientTagId) {
           createActionError(ErrorMessages.ERR_FETCHING_TIDE_DASHBOARD_PATIENTS, err), err
         ));
       } else {
+        if (results.config) results.config.lastData = options.lastData;
         dispatch(sync.fetchTideDashboardPatientsSuccess(results));
       }
     });
@@ -2964,16 +2968,16 @@ export function deleteClinicPatientTag(api, clinicId, patientTagId) {
  * @param {Object} [options.patientFilters] - Filters used to generate the patient list
  * @param {String} [options.patientFilters.search] - Search query string
  * @param {Array} [options.patientFilters.tags] - Array of clinic patient tag IDs
- * @param {String} [options.patientFilters.cgm.lastUploadDateFrom] - UTC ISO datetime for minimum date of the last cgm upload
- * @param {String} [options.patientFilters.cgm.lastUploadDateTo] - UTC ISO datetime for maximum date of the last cgm upload
+ * @param {String} [options.patientFilters.cgm.lastDataFrom] - UTC ISO datetime for minimum date of the last cgm upload
+ * @param {String} [options.patientFilters.cgm.lastDataTo] - UTC ISO datetime for maximum date of the last cgm upload
  * @param {String} [options.patientFilters.cgm.timeInLowPercent] - Comparator and value for time in low percent
  * @param {String} [options.patientFilters.cgm.timeInHighPercent] - Comparator and value for time in high percent
  * @param {String} [options.patientFilters.cgm.timeInVeryLowPercent] - Comparator and value for time in very low percent
  * @param {String} [options.patientFilters.cgm.timeInTargetPercent] - Comparator and value for time in target percent
  * @param {String} [options.patientFilters.cgm.timeInVeryHighPercent] - Comparator and value for time in very high percent
  * @param {String} [options.patientFilters.cgm.timeCGMUsePercent] - Comparator and value for time of cgm use percent
- * @param {String} [options.patientFilters.bgm.lastUploadDateFrom] - UTC ISO datetime for minimum date of the last bgm upload
- * @param {String} [options.patientFilters.bgm.lastUploadDateTo] - UTC ISO datetime for maximum date of the last bgm upload
+ * @param {String} [options.patientFilters.bgm.lastDataFrom] - UTC ISO datetime for minimum date of the last bgm upload
+ * @param {String} [options.patientFilters.bgm.lastDataTo] - UTC ISO datetime for maximum date of the last bgm upload
  */
 export function fetchRpmReportPatients(api, clinicId, options) {
   return (dispatch) => {

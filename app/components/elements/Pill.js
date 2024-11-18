@@ -8,7 +8,7 @@ import baseTheme from '../../themes/baseTheme';
 
 const namedPalletMap = {
   blues: ['blues.0', 'blues.9'],
-  cyans: ['cyans.0', 'cyans.9'],
+  cyans: ['cyans.0', '#15798E'],
   grays: ['grays.0', 'grays.9'],
   greens: ['greens.0', 'greens.9'],
   indigos: ['indigos.0', 'indigos.9'],
@@ -18,6 +18,7 @@ const namedPalletMap = {
   primaryText: ['#F3F7FC', 'text.primary'],
   warning: ['#FFE8CF', 'feedback.warning'],
   success: ['#EBFBF0', 'feedback.success'],
+  neutral: ['lightestGrey', '#707070'],
   transparent: ['transparent', 'inherit'],
 };
 
@@ -102,6 +103,11 @@ Pill.propTypes = {
       'oranges',
       'pinks',
       'purples',
+      'primaryText',
+      'warning',
+      'success',
+      'neutral',
+      'transparent',
     ]),
     PropTypes.arrayOf(PropTypes.string),
   ]),
