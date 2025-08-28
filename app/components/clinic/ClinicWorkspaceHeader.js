@@ -27,6 +27,7 @@ export const ClinicWorkspaceHeader = (props) => {
   const selectedClinicId = useSelector((state) => state.blip.selectedClinicId);
   const clinic = get(clinics, selectedClinicId);
   const isWorkspacePath = pathname.indexOf('/clinic-workspace') === 0;
+  const fetchedPatientTotalCount = clinic?.fetchedPatientTotalCount || 0;
 
   const buttonText = useMemo(() =>
     <Icon
@@ -71,7 +72,7 @@ export const ClinicWorkspaceHeader = (props) => {
       <Flex
         id="clinicProfileDetails"
         px={4}
-        py={3}
+        py="12px"
         sx={{
           columnGap: 5,
           flexWrap: 'wrap',
@@ -156,7 +157,7 @@ export const ClinicWorkspaceHeader = (props) => {
                     px={1}
                     pt="2px"
                     pb={0}
-                    text={`${clinic.patientCount}${clinic.ui.display?.patientLimit ? ' / ' + clinic.patientCountSettings?.hardLimit?.patientCount : '' }`}
+                    text={`${fetchedPatientTotalCount}${clinic.ui.display?.patientLimit ? ' / ' + clinic.patientCountSettings?.hardLimit?.patientCount : '' }`}
                     icon={clinic?.ui.warnings.limitReached ? WarningRoundedIcon : null}
                     label={t('Patient Count')}
                     colorPalette={clinic?.ui.warnings.limitReached || clinic?.ui.warnings.limitApproaching ? 'warning' : 'transparent'}
@@ -222,7 +223,7 @@ export const ClinicWorkspaceHeader = (props) => {
               iconPosition='left'
               iconFontSize="1.25em"
               iconLabel={navigationAction.label}
-              sx={{ fontSize: 1 }}
+              sx={{ fontSize: 1, fontWeight: 'medium' }}
               pl={0}
             >
               {navigationAction.label}

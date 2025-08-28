@@ -101,7 +101,7 @@ describe('PatientInvites', () => {
         acceptingPatientInvitation: defaultWorkingState,
         deletingPatientInvitation: defaultWorkingState,
         deletingPatientInvitation: defaultWorkingState,
-        sendingPatientDexcomConnectRequest: defaultWorkingState,
+        sendingPatientDataProviderConnectRequest: defaultWorkingState,
         fetchingPatientsForClinic: defaultWorkingState,
       },
     },
@@ -314,6 +314,8 @@ describe('PatientInvites', () => {
             fullName: 'Patient 2',
             mrn: 'MRN456',
             tags: [],
+            sites: [],
+            glycemicRanges: 'ADA standard',
           }
         );
 
@@ -395,6 +397,8 @@ describe('PatientInvites', () => {
             fullName: 'Patient 2',
             mrn: 'MRN456',
             tags: [],
+            sites: [],
+            glycemicRanges: 'ADA standard',
           }
         );
 

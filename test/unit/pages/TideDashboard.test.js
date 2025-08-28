@@ -13,6 +13,8 @@ import { ToastProvider } from '../../../app/providers/ToastProvider';
 import TideDashboard from '../../../app/pages/dashboard/TideDashboard';
 import Popover from '../../../app/components/elements/Popover';
 import TideDashboardConfigForm from '../../../app/components/clinic/TideDashboardConfigForm';
+import DataConnections from '../../../app/components/datasources/DataConnections';
+import DataConnectionsModal from '../../../app/components/datasources/DataConnectionsModal';
 import { clinicUIDetails } from '../../../app/core/clinicUtils';
 import mockTideDashboardPatients from '../../fixtures/mockTideDashboardPatients.json';
 import LDClientMock from '../../fixtures/LDClientMock';
@@ -62,11 +64,30 @@ describe('TideDashboard', () => {
       showTideDashboard: true,
       showSummaryDashboard: true,
     }));
+
+    DataConnections.__Rewire__('api', defaultProps.api);
+    DataConnectionsModal.__Rewire__('api', defaultProps.api);
+    DataConnectionsModal.__Rewire__('useHistory', sinon.stub().returns({
+      location: { query: {}, pathname: '/settings' },
+      replace: sinon.stub(),
+    }));
+
+    TideDashboard.__Rewire__('useLocation', sinon.stub().returns({
+      search: '',
+      pathname: '/dashboard/tide'
+    }));
+
+    TideDashboard.__Rewire__('useHistory', sinon.stub().returns({
+      replace: sinon.stub()
+    }));
   });
 
   afterEach(() => {
     TideDashboard.__ResetDependency__('useLDClient');
     TideDashboard.__ResetDependency__('useFlags');
+    DataConnections.__ResetDependency__('api');
+    DataConnectionsModal.__ResetDependency__('api');
+    DataConnectionsModal.__ResetDependency__('useHistory');
   });
 
   const sampleTags = [
@@ -190,7 +211,7 @@ describe('TideDashboard', () => {
         fetchingPatientFromClinic: defaultWorkingState,
         fetchingTideDashboardPatients: completedState,
         updatingClinicPatient: defaultWorkingState,
-        sendingPatientDexcomConnectRequest: defaultWorkingState,
+        sendingPatientDataProviderConnectRequest: defaultWorkingState,
         settingClinicPatientLastReviewed: defaultWorkingState,
         revertingClinicPatientLastReviewed: defaultWorkingState,
       },
@@ -575,7 +596,7 @@ describe('TideDashboard', () => {
       expect(getTableRow(0, 2).find('td').at(3).text()).contains('3 %');
       expect(getTableRow(0, 3).find('td').at(3).text()).contains('1 %');
 
-      expect(getTableRow(0, 0).find('th').at(5).text()).contains('% Time 54-70');
+      expect(getTableRow(0, 0).find('th').at(5).text()).contains('% Time < 70');
       expect(getTableRow(0, 2).find('td').at(4).text()).contains('17 %');
 
       expect(getTableRow(0, 0).find('th').at(6).text()).contains('% TIR 70-180');
@@ -585,12 +606,12 @@ describe('TideDashboard', () => {
       expect(getTableRow(0, 2).find('td').at(6).find('.range-summary-bars').hostNodes()).to.have.lengthOf(1);
 
       expect(getTableRow(0, 0).find('th').at(8).text()).contains('% Change in TIR');
-      expect(getTableRow(0, 2).find('td').at(7).text()).contains('10.3');
+      expect(getTableRow(0, 2).find('td').at(7).text()).contains('10');
 
       expect(getTableRow(0, 0).find('th').at(9).text()).contains('Tags');
       expect(getTableRow(0, 2).find('td').at(8).text()).contains('test tag 1');
 
-      // Should contain a "more" menu that allows opening a patient edit dialog
+      // Should contain a "more" menu that allows opening a patient edit dialog and opening a patient data connections dialog
       const moreMenuIcon = getTableRow(0, 2).find('td').at(9).find('PopoverMenu').find('Icon').at(0);
       const popoverMenu = () => wrapper.find(Popover).at(4);
       expect(popoverMenu().props().open).to.be.false;
@@ -600,27 +621,41 @@ describe('TideDashboard', () => {
       const editButton = popoverMenu().find('Button[iconLabel="Edit Patient Information"]');
       expect(editButton).to.have.lengthOf(1);
 
-      const dialog = () => wrapper.find('Dialog#editPatient');
-      expect(dialog()).to.have.length(0);
+      const editDialog = () => wrapper.find('Dialog#editPatient');
+      expect(editDialog()).to.have.length(0);
       editButton.simulate('click');
       wrapper.update();
-      expect(dialog()).to.have.length(1);
-      expect(dialog().props().open).to.be.true;
+      expect(editDialog()).to.have.length(1);
+      expect(editDialog().props().open).to.be.true;
 
       expect(defaultProps.trackMetric.calledWith('Clinic - Edit patient')).to.be.true;
       expect(defaultProps.trackMetric.callCount).to.equal(1);
 
+      const dataConnectionsButton = popoverMenu().find('Button[iconLabel="Bring Data into Tidepool"]');
+      expect(dataConnectionsButton).to.have.lengthOf(1);
+
+      const dataConnectionsDialog = () => wrapper.find('Dialog#data-connections');
+      expect(dataConnectionsDialog()).to.have.length(0);
+
+      dataConnectionsButton.simulate('click');
+      wrapper.update();
+      expect(dataConnectionsDialog()).to.have.length(1);
+      expect(dataConnectionsDialog().props().open).to.be.true;
+
+      expect(defaultProps.trackMetric.calledWith('Clinic - Edit patient data connections')).to.be.true;
+      expect(defaultProps.trackMetric.callCount).to.equal(2);
+
       // Confirm second table is sorted appropriately
-      expect(getTableRow(1, 0).find('th').at(5).text()).contains('% Time 54-70');
+      expect(getTableRow(1, 0).find('th').at(5).text()).contains('% Time < 70');
       expect(getTableRow(1, 1).find('td').at(4).text()).contains('9 %');
       expect(getTableRow(1, 2).find('td').at(4).text()).contains('9 %');
       expect(getTableRow(1, 3).find('td').at(4).text()).contains('6 %');
 
       // Confirm third table is sorted appropriately
       expect(getTableRow(2, 0).find('th').at(8).text()).contains('% Change in TIR');
-      expect(getTableRow(2, 1).find('td').at(7).text()).contains('26.3');
-      expect(getTableRow(2, 2).find('td').at(7).text()).contains('24.5');
-      expect(getTableRow(2, 3).find('td').at(7).text()).contains('24.3');
+      expect(getTableRow(2, 1).find('td').at(7).text()).contains('26');
+      expect(getTableRow(2, 2).find('td').at(7).text()).contains('25');
+      expect(getTableRow(2, 3).find('td').at(7).text()).contains('24');
 
       // Confirm fourth table is sorted appropriately
       expect(getTableRow(3, 0).find('th').at(6).text()).contains('% TIR 70-180');
@@ -636,8 +671,8 @@ describe('TideDashboard', () => {
 
       // Confirm sixth table is sorted appropriately
       expect(getTableRow(5, 0).find('th').at(4).text()).contains('% Time < 54');
-      expect(getTableRow(5, 1).find('td').at(3).text()).contains('1 %');
-      expect(getTableRow(5, 2).find('td').at(3).text()).contains('1 %');
+      expect(getTableRow(5, 1).find('td').at(3).text()).contains('0.7 %');
+      expect(getTableRow(5, 2).find('td').at(3).text()).contains('0.6 %');
       expect(getTableRow(5, 3).find('td').at(3).text()).contains('0.3 %');
       expect(getTableRow(5, 4).find('td').at(3).text()).contains('0.2 %');
       expect(getTableRow(5, 5).find('td').at(3).text()).contains('0.1 %');
@@ -660,6 +695,19 @@ describe('TideDashboard', () => {
 
       expect(getTableRow(6, 0).find('th').at(2).text()).contains('Days Since Last Data');
       expect(getTableRow(6, 1).find('td').at(1).text()).contains('200');
+
+      // Verify that various connection statuses are rendering correctly
+      expect(getTableRow(6, 2).find('th').at(0).text()).contains('Willie Gambles');
+      expect(getTableRow(6, 2).find('td').at(0).text()).contains('Invite Sent');
+
+      expect(getTableRow(6, 3).find('th').at(0).text()).contains('Denys Ickov');
+      expect(getTableRow(6, 3).find('td').at(0).text()).contains('Patient Disconnected');
+
+      expect(getTableRow(6, 4).find('th').at(0).text()).contains('Johna Slatcher');
+      expect(getTableRow(6, 4).find('td').at(0).text()).contains('No Pending Connections');
+
+      expect(getTableRow(6, 5).find('th').at(0).text()).contains('Emelda Stangoe');
+      expect(getTableRow(6, 5).find('td').at(0).text()).contains('Invite Expired');
     });
 
     it('should show empty text for a section without results', () => {
@@ -707,7 +755,7 @@ describe('TideDashboard', () => {
       expect(store.getActions()).to.eql([
         {
           type: '@@router/CALL_HISTORY_METHOD',
-          payload: { method: 'push', args: [`/patients/${expectedPatientId}/data?chart=trends&dashboard=tide`]}
+          payload: { method: 'push', args: [`/patients/${expectedPatientId}/data/trends?dashboard=tide`]}
         },
       ]);
     });
@@ -754,7 +802,7 @@ describe('TideDashboard', () => {
         expect(getTableRow(0, 2).find('td').at(3).text()).contains('3 %');
         expect(getTableRow(0, 3).find('td').at(3).text()).contains('1 %');
 
-        expect(getTableRow(0, 0).find('th').at(5).text()).contains('% Time 3.0-3.9');
+        expect(getTableRow(0, 0).find('th').at(5).text()).contains('% Time < 3.9');
         expect(getTableRow(0, 2).find('td').at(4).text()).contains('17 %');
       });
     });

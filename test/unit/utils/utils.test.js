@@ -3,17 +3,25 @@
 /* global it */
 /* global context */
 /* global sinon */
+/* global after */
 /* global afterEach */
 /* global assert */
 
 
 import _ from 'lodash';
 import utils from '../../../app/core/utils';
-import { DEFAULT_FILTER_THRESHOLDS, MMOLL_UNITS, MGDL_UNITS } from '../../../app/core/constants';
+import { MMOLL_UNITS, MGDL_UNITS } from '../../../app/core/constants';
 import releases from '../../fixtures/githubreleasefixture';
+import { utils as vizUtils } from '@tidepool/viz';
+const { GLYCEMIC_RANGE } = vizUtils.constants;
 const expect = chai.expect;
 
 describe('utils', () => {
+  after(() => {
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+    Object.defineProperty(window.navigator, 'userAgent', { value: userAgent, configurable: true });
+  });
+
   describe('capitalize', () => {
     it('should return a capitalized string', () => {
       expect(utils.capitalize('lower')).to.equal('Lower');
@@ -69,6 +77,98 @@ describe('utils', () => {
     it('should return undefined if value given is not an object', () => {
       var result = utils.getIn(null, ['a', 'b']);
       expect(result).to.be.undefined;
+    });
+  });
+
+  const USER_AGENTS = {
+    chromeWin: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    chromeMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    chromeIPad: 'Mozilla/5.0 (iPad; CPU OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/133.0.6943.33 Mobile/15E148 Safari/604.1',
+    chromeIPhone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/133.0.6943.33 Mobile/15E148 Safari/604.1',
+    chromeAndroid: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.49 Mobile Safari/537.36',
+
+    firefoxWin: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0',
+    firefoxMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:135.0) Gecko/20100101 Firefox/135.0',
+    firefoxIPhone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/135.0 Mobile/15E148 Safari/605.1.15',
+    firefoxAndroid: 'Mozilla/5.0 (Android 15; Mobile; rv:135.0) Gecko/135.0 Firefox/135.0',
+
+    edgeWin: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/131.0.2903.86',
+    edgeMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/131.0.2903.86',
+    edgeAndroid: 'Mozilla/5.0 (Linux; Android 10; HD1913) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.49 Mobile Safari/537.36 EdgA/131.0.2903.87',
+    edgeIPhone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 EdgiOS/131.2903.92 Mobile/15E148 Safari/605.1.15',
+
+    safariMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15',
+    safariIPhone: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1',
+    safariIPad: 'Mozilla/5.0 (iPad; CPU OS 17_7_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1',
+  };
+
+  describe('isSupportedBrowser', () => {
+    it('returns true for only supported devices', () => {
+      _.each(Object.values(USER_AGENTS), userAgent => {
+        Object.defineProperty(window.navigator, 'userAgent', { value: userAgent, configurable: true });
+
+        switch(userAgent) {
+          case USER_AGENTS.chromeWin:
+          case USER_AGENTS.chromeMac:
+          case USER_AGENTS.chromeIPad:
+          case USER_AGENTS.chromeIPhone:
+          case USER_AGENTS.chromeAndroid:
+          case USER_AGENTS.edgeWin:
+          case USER_AGENTS.edgeMac:
+          case USER_AGENTS.edgeAndroid:
+          case USER_AGENTS.edgeIPhone:
+          case USER_AGENTS.safariIPhone:
+          case USER_AGENTS.safariIPad:
+            expect(utils.isSupportedBrowser()).to.be.true;
+            break;
+
+          case USER_AGENTS.firefoxWin:
+          case USER_AGENTS.firefoxMac:
+          case USER_AGENTS.firefoxIPhone:
+          case USER_AGENTS.firefoxAndroid:
+          case USER_AGENTS.safariMac:
+            expect(utils.isSupportedBrowser()).to.be.false;
+            break;
+
+          default:
+            throw new Error('Each string in USER_AGENTS should have an expected result in the test');
+        }
+      });
+    });
+  });
+
+  describe('isMobile', () => {
+    it('returns true for only supported devices', () => {
+      _.each(Object.values(USER_AGENTS), userAgent => {
+        Object.defineProperty(window.navigator, 'userAgent', { value: userAgent, configurable: true });
+
+        switch(userAgent) {
+          case USER_AGENTS.chromeIPad:
+          case USER_AGENTS.chromeIPhone:
+          case USER_AGENTS.chromeAndroid:
+          case USER_AGENTS.edgeAndroid:
+          case USER_AGENTS.edgeIPhone:
+          case USER_AGENTS.safariIPhone:
+          case USER_AGENTS.safariIPad:
+          case USER_AGENTS.firefoxIPhone:
+          case USER_AGENTS.firefoxAndroid:
+            expect(utils.isMobile()).to.be.true;
+            break;
+
+          case USER_AGENTS.chromeWin:
+          case USER_AGENTS.chromeMac:
+          case USER_AGENTS.edgeWin:
+          case USER_AGENTS.edgeMac:
+          case USER_AGENTS.firefoxWin:
+          case USER_AGENTS.firefoxMac:
+          case USER_AGENTS.safariMac:
+            expect(utils.isMobile()).to.be.false;
+            break;
+
+          default:
+            throw new Error('Each string in USER_AGENTS should have an expected result in the test');
+        }
+      });
     });
   });
 
@@ -377,6 +477,44 @@ describe('utils', () => {
     });
   });
 
+
+  describe('getCBGFilter', () => {
+    it('should return cbgFilter from query property of location object', () => {
+      var location = {
+        query: {
+          cbgFilter: 'true'
+        }
+      };
+      expect(utils.getCBGFilter(location)).to.equal('true');
+    });
+
+    it('should return empty string if empty cbgFilter in query property of location object', () => {
+      var location = {
+        query: {
+          cbgFilter: ''
+        }
+      };
+      expect(utils.getCBGFilter(location)).to.equal('');
+    });
+
+    it('should return null if no location object', () => {
+      expect(utils.getCBGFilter()).to.equal(null);
+    });
+
+    it('should return null if no query property of location object', () => {
+      expect(utils.getCBGFilter({})).to.equal(null);
+    });
+
+    it('should return null if no cbgFilter in query property of location object', () => {
+      var location = {
+        query: {
+          signupEmail: 'jane@tidepool.org'
+        }
+      };
+      expect(utils.getCBGFilter(location)).to.equal(null);
+    });
+  });
+
   describe('translateBg', () => {
     it('should translate a BG value to the desired target unit', () => {
       expect(utils.translateBg(180, MMOLL_UNITS)).to.equal(10);
@@ -508,6 +646,126 @@ describe('utils', () => {
     });
   });
 
+  describe('getBGPrefsForDataProcessing', () => {
+    describe('patient viewing own data', () => {
+      it('should return correct result when no custom preferences', () => {
+        const result = utils.getBGPrefsForDataProcessing(
+          {}, // patientSettings is empty if settings have never once been modified by PwD
+          {},
+          { source: 'preferred clinic units', units: undefined },
+        );
+
+        expect(result).to.eql({
+          bgUnits: 'mg/dL',
+          bgClasses: {
+            'very-low': { boundary: 54 },
+            low: { boundary: 70 },
+            target: { boundary: 180 },
+            high: { boundary: 250 },
+            'very-high': { boundary: 350 },
+          },
+        });
+      });
+
+      it('should return correct result when PwD has custom bg range', () => {
+        const result = utils.getBGPrefsForDataProcessing(
+          { bgTarget: { high: 210, low: 110 }, units: { bg: 'mg/dL' } },
+          {},
+          { source: 'preferred clinic units', units: undefined }
+        );
+
+        expect(result).to.eql({
+          bgUnits: 'mg/dL',
+          bgClasses: {
+            'very-low': { boundary: 54 },
+            low: { boundary: 110 },
+            target: { boundary: 210 },
+            high: { boundary: 250 },
+            'very-high': { boundary: 350 },
+          },
+        });
+      });
+
+      it('should return correct result when PwD has custom bg range in mmol/L', () => {
+        const result = utils.getBGPrefsForDataProcessing(
+          { bgTarget: { high: 10.1, low: 5.1 }, units: { bg: 'mmol/L' } },
+          {},
+          { source: 'preferred clinic units', units: undefined }
+        );
+
+        expect(result).to.eql({
+          bgUnits: 'mmol/L',
+          bgClasses: {
+            'very-low': { boundary: 3 },
+            low: { boundary: 5.1 },
+            target: { boundary: 10.1 },
+            high: { boundary: 13.9 },
+            'very-high': { boundary: 19.4 },
+          },
+        });
+      });
+    });
+
+    describe('clinician viewing data of pwd', () => {
+      it('should return correct classes when PwD has no custom bg range', () => {
+        const result = utils.getBGPrefsForDataProcessing(
+          {}, // patientSettings object is empty if settings have never once been modified by PwD
+          { id: 'abcd-1234', glycemicRanges: GLYCEMIC_RANGE.ADA_PREGNANCY_T1 },
+          { source: 'preferred clinic units', units: 'mg/dL' }
+        );
+
+        expect(result).to.eql({
+          bgUnits: 'mg/dL',
+          bgClasses: {
+            'very-low': { boundary: 54 },
+            low: { boundary: 63 },
+            target: { boundary: 140 },
+            high: { boundary: null },
+            'very-high': { boundary: null },
+          },
+        });
+      });
+
+      it('should override classes when PwD has custom bg range setting', () => {
+        const result = utils.getBGPrefsForDataProcessing(
+          { bgTarget: { high: 165, low: 115 }, units: { bg: 'mg/dL' } },
+          { id: 'abcd-1234', glycemicRanges: GLYCEMIC_RANGE.ADA_OLDER_HIGH_RISK },
+          { source: 'preferred clinic units', units: 'mg/dL' }
+        );
+
+        expect(result).to.eql({
+          bgUnits: 'mg/dL',
+          bgClasses: {
+            'very-low': { boundary: null },
+            low: { boundary: 70 },
+            target: { boundary: 180 },
+            high: { boundary: 250 },
+            'very-high': { boundary: null },
+          },
+        });
+      });
+
+      it('should override classes when PwD has custom bg range setting in different units', () => {
+        const result = utils.getBGPrefsForDataProcessing(
+          { bgTarget: { high: 8, low: 5 }, units: { bg: 'mmol/L' } },
+          { id: 'abcd-1234', glycemicRanges: GLYCEMIC_RANGE.ADA_PREGNANCY_T1 },
+          { source: 'preferred clinic units', units: 'mg/dL' }
+        );
+
+        expect(result).to.eql({
+          bgUnits: 'mg/dL',
+          bgClasses: {
+            'very-low': { boundary: 54 },
+            low: { boundary: 63 },
+            target: { boundary: 140 },
+            high: { boundary: null },
+            'very-high': { boundary: null },
+          },
+        });
+      });
+    });
+  });
+
   describe('stripTrailingSlash', function() {
     it('should strip a trailing forward slash from a string', function() {
       const url = '/my-path/sub-path/';
@@ -551,6 +809,17 @@ describe('utils', () => {
       expect(utils.formatDecimal(1.23456, 3)).to.equal('1.235');
       expect(utils.formatDecimal(1.23456)).to.equal('1');
     });
+
+    it('should round to nearest whole integer when precision not specified', () => {
+      expect(utils.formatDecimal(3.85)).to.equal('4');
+    });
+
+    it('should utilize use bankers rounding', () => {
+      expect(utils.formatDecimal(3.85, 1)).to.equal('3.8');
+      expect(utils.formatDecimal(3.75, 1)).to.equal('3.8');
+      expect(utils.formatDecimal(3.05, 1)).to.equal('3.0');
+      expect(utils.formatDecimal(3, 1)).to.equal('3.0');
+    });
   });
 
   describe('roundToPrecision', function() {
@@ -580,160 +849,59 @@ describe('utils', () => {
     });
   });
 
-  describe('formatThresholdPercentage', () => {
-    it('should round for `veryLow` between 1 and 1.5 percent with 0.1 precision', () => {
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.veryLow, ['>', 1]);
-
-      // Should round up to threshold
-      expect(utils.formatThresholdPercentage(0.0099, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('1');
-
-      // Should not round down to threshold
-      expect(utils.formatThresholdPercentage(0.0101, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('1.1');
-
-      // Values inside custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.0111, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('1.1');
-      expect(utils.formatThresholdPercentage(0.0149, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('1.5');
-
-      // Values above custom rounding range rounding naturally to integer
-      expect(utils.formatThresholdPercentage(0.005, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('1');
-      expect(utils.formatThresholdPercentage(0.0151, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('2');
-
-      // Values below 0.5 percent rounding with extra precision
-      expect(utils.formatThresholdPercentage(0.000001, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('0.01');
-      expect(utils.formatThresholdPercentage(0.00049, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('0.05');
-      expect(utils.formatThresholdPercentage(0.0049, ...DEFAULT_FILTER_THRESHOLDS.veryLow)).to.equal('0.5');
+  describe('parseDatetimeParamToInteger', () => {
+    it('returns null when falsy or nullish arg provided', () => {
+      expect(utils.parseDatetimeParamToInteger()).to.be.null;
+      expect(utils.parseDatetimeParamToInteger(null)).to.be.null;
     });
 
-    it('should round for `low` between 4 and 4.5 percent with 0.1 precision', () => {
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.low, ['>', 4]);
-
-      // Should round up to threshold
-      expect(utils.formatThresholdPercentage(0.0399, ...DEFAULT_FILTER_THRESHOLDS.low)).to.equal('4');
-
-      // Should not round down to threshold
-      expect(utils.formatThresholdPercentage(0.0401, ...DEFAULT_FILTER_THRESHOLDS.low)).to.equal('4.1');
-
-      // Values inside custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.0411, ...DEFAULT_FILTER_THRESHOLDS.low)).to.equal('4.1');
-      expect(utils.formatThresholdPercentage(0.0449, ...DEFAULT_FILTER_THRESHOLDS.low)).to.equal('4.5');
-
-      // Values outside custom rounding range rounding naturally to integer
-      expect(utils.formatThresholdPercentage(0.0349, ...DEFAULT_FILTER_THRESHOLDS.low)).to.equal('3');
-      expect(utils.formatThresholdPercentage(0.045, ...DEFAULT_FILTER_THRESHOLDS.low)).to.equal('5');
+    it('returns the arg unchanged when it is already an integer', () => {
+      expect(utils.parseDatetimeParamToInteger(1234567890)).to.equal(1234567890);
     });
 
-    it('should round for `target` between 69.5 and 70 percent with 0.1 precision', () => {
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.target, ['<', 70]);
-
-      // Should not round up to threshold
-      expect(utils.formatThresholdPercentage(0.6999, ...DEFAULT_FILTER_THRESHOLDS.target)).to.equal('69.9');
-
-      // Should round down to threshold
-      expect(utils.formatThresholdPercentage(0.7001, ...DEFAULT_FILTER_THRESHOLDS.target)).to.equal('70');
-
-      // Values inside custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.6951, ...DEFAULT_FILTER_THRESHOLDS.target)).to.equal('69.5');
-      expect(utils.formatThresholdPercentage(0.6989, ...DEFAULT_FILTER_THRESHOLDS.target)).to.equal('69.9');
-
-      // Values outside custom rounding range rounding naturally to integer
-      expect(utils.formatThresholdPercentage(0.6949, ...DEFAULT_FILTER_THRESHOLDS.target)).to.equal('69');
-      expect(utils.formatThresholdPercentage(0.705, ...DEFAULT_FILTER_THRESHOLDS.target)).to.equal('71');
+    it('returns the arg as an integer when it is a string', () => {
+      expect(utils.parseDatetimeParamToInteger('001234567890')).to.equal(1234567890);
     });
 
-    it('should round for `high` between 25 and 25.5 percent with 0.1 precision', () => {
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.high, ['>', 25]);
-
-      // Should round up to threshold
-      expect(utils.formatThresholdPercentage(0.2499, ...DEFAULT_FILTER_THRESHOLDS.high)).to.equal('25');
-
-      // Should not round down to threshold
-      expect(utils.formatThresholdPercentage(0.2501, ...DEFAULT_FILTER_THRESHOLDS.high)).to.equal('25.1');
-
-      // Values inside custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.2511, ...DEFAULT_FILTER_THRESHOLDS.high)).to.equal('25.1');
-      expect(utils.formatThresholdPercentage(0.2549, ...DEFAULT_FILTER_THRESHOLDS.high)).to.equal('25.5');
-
-      // Values outside custom rounding range rounding naturally to integer
-      expect(utils.formatThresholdPercentage(0.2449, ...DEFAULT_FILTER_THRESHOLDS.high)).to.equal('24');
-      expect(utils.formatThresholdPercentage(0.255, ...DEFAULT_FILTER_THRESHOLDS.high)).to.equal('26');
+    it('parses the arg as an ISO string to unix timestamp', () => {
+      expect(utils.parseDatetimeParamToInteger('2017-01-01T00:00:00.000Z')).to.equal(1483228800000);
     });
 
-    it('should round for `veryHigh` between 5 and 5.5 percent with 0.1 precision', () => {
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.veryHigh, ['>', 5]);
+    it('returns null if the arg is not a valid date string', () => {
+      expect(utils.parseDatetimeParamToInteger('not-a-date')).to.be.null;
+    });
+  });
 
-      // Should round up to threshold
-      expect(utils.formatThresholdPercentage(0.0499, ...DEFAULT_FILTER_THRESHOLDS.veryHigh)).to.equal('5');
-
-      // Should not round down to threshold
-      expect(utils.formatThresholdPercentage(0.0501, ...DEFAULT_FILTER_THRESHOLDS.veryHigh)).to.equal('5.1');
-
-      // Other values in custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.0511, ...DEFAULT_FILTER_THRESHOLDS.veryHigh)).to.equal('5.1');
-      expect(utils.formatThresholdPercentage(0.0549, ...DEFAULT_FILTER_THRESHOLDS.veryHigh)).to.equal('5.5');
-
-      // Values outside custom rounding range rounding naturally to integer
-      expect(utils.formatThresholdPercentage(0.0449, ...DEFAULT_FILTER_THRESHOLDS.veryHigh)).to.equal('4');
-      expect(utils.formatThresholdPercentage(0.055, ...DEFAULT_FILTER_THRESHOLDS.veryHigh)).to.equal('6');
+  describe('compareLabels', function() {
+    it('Sorts a blank arg before a truthy arg', function() {
+      expect(utils.compareLabels(undefined, undefined)).to.equal(0);
+      expect(utils.compareLabels('', undefined)).to.equal(0);
+      expect(utils.compareLabels(undefined, '')).to.equal(0);
+      expect(utils.compareLabels(undefined, 'test')).to.equal(-1);
+      expect(utils.compareLabels('', 'test')).to.equal(-1);
+      expect(utils.compareLabels('test', undefined)).to.equal(1);
+      expect(utils.compareLabels('test', '')).to.equal(1);
     });
 
-    it('should round for `cgmUse` between 69.5 and 70 percent with 0.1 precision', () => {
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.cgmUse, ['<', 70]);
+    it('Sorts numerically rather than lexicographically', () => {
+      let arr = ['Tag 12', 'Tag 8', 'Tag 9a', 'Tag 9', ''];
+      arr.sort((a, b) => utils.compareLabels(a, b));
 
-      // Should not round up to threshold
-      expect(utils.formatThresholdPercentage(0.6999, ...DEFAULT_FILTER_THRESHOLDS.cgmUse)).to.equal('69.9');
-
-      // Should round down to threshold
-      expect(utils.formatThresholdPercentage(0.7001, ...DEFAULT_FILTER_THRESHOLDS.cgmUse)).to.equal('70');
-
-      // Values inside custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.6951, ...DEFAULT_FILTER_THRESHOLDS.cgmUse)).to.equal('69.5');
-      expect(utils.formatThresholdPercentage(0.6989, ...DEFAULT_FILTER_THRESHOLDS.cgmUse)).to.equal('69.9');
-
-      // Values outside custom rounding range rounding naturally to integer
-      expect(utils.formatThresholdPercentage(0.6949, ...DEFAULT_FILTER_THRESHOLDS.cgmUse)).to.equal('69');
-      expect(utils.formatThresholdPercentage(0.705, ...DEFAULT_FILTER_THRESHOLDS.cgmUse)).to.equal('71');
+      expect(arr).to.eql(['', 'Tag 8', 'Tag 9', 'Tag 9a', 'Tag 12']);
     });
 
-    it('should round for `timeInTargetPercentDelta` between with 0.1 precision for all values', () => {
-      // the `1` sets the default precision outside of the custom rounding range to use 0.1 precision instead of nearest integer
-      assert.deepEqual(DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta, ['>', 15, 1]);
+    it('Sorts base characters ahead of variant characters', () => {
+      let arr = ['café', 'cafe'];
+      arr.sort((a, b) => utils.compareLabels(a, b));
 
-      // Should round up to threshold
-      expect(utils.formatThresholdPercentage(0.1499, ...DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta)).to.equal('15.0');
-
-      // Should not round down to threshold
-      expect(utils.formatThresholdPercentage(0.1501, ...DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta)).to.equal('15.1');
-
-      // Values inside custom rounding range rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.1511, ...DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta)).to.equal('15.1');
-      expect(utils.formatThresholdPercentage(0.1549, ...DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta)).to.equal('15.5');
-
-      // Values outside custom rounding range also rounding naturally to 0.1 precision
-      expect(utils.formatThresholdPercentage(0.1449, ...DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta)).to.equal('14.5');
-      expect(utils.formatThresholdPercentage(0.155, ...DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta)).to.equal('15.5');
+      expect(arr).to.eql(['cafe', 'café']);
     });
 
-    it('should round values from 0.05 to 0.5 percent with 0.1 precision', () => {
-      expect(utils.formatThresholdPercentage(0.0005)).to.equal('0.1');
-      expect(utils.formatThresholdPercentage(0.0041)).to.equal('0.4');
-      expect(utils.formatThresholdPercentage(0.0049)).to.equal('0.5');
-      expect(utils.formatThresholdPercentage(0.005)).to.equal('1');
-    });
+    it('Sorts uppercase characters ahead of lowercase characters', () => {
+      let arr = ['john', 'jOhn', 'John'];
+      arr.sort((a, b) => utils.compareLabels(a, b));
 
-    it('should round values between 0 and 0.05 percent with 0.01 precision', () => {
-      expect(utils.formatThresholdPercentage(0.0000)).to.equal('0');
-      expect(utils.formatThresholdPercentage(0.00005)).to.equal('0.01');
-      expect(utils.formatThresholdPercentage(0.00041)).to.equal('0.04');
-      expect(utils.formatThresholdPercentage(0.00049)).to.equal('0.05');
-      expect(utils.formatThresholdPercentage(0.0005)).to.equal('0.1');
-    });
-
-    it('should round numbers less than 0.005 percent up to 0.01% rather than down to zero', () => {
-      expect(utils.formatThresholdPercentage(0.00001)).to.equal('0.01');
-      expect(utils.formatThresholdPercentage(0.00004)).to.equal('0.01');
-      expect(utils.formatThresholdPercentage(0.00005)).to.equal('0.01');
-      expect(utils.formatThresholdPercentage(0.00014)).to.equal('0.01');
-      expect(utils.formatThresholdPercentage(0.00015)).to.equal('0.02');
+      expect(arr).to.eql(['John', 'jOhn', 'john']);
     });
   });
 });

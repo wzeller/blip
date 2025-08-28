@@ -28,6 +28,7 @@ export const URL_UPLOADER_DOWNLOAD_PAGE = 'https://tidepool.org/products/tidepoo
 export const URL_SHARE_DATA_INFO = 'https://support.tidepool.org/hc/en-us/articles/360029684951-Share-your-Data';
 export const URL_TIDEPOOL_PLUS_PLANS = 'https://tidepool.org/providers/tidepoolplus/plans';
 export const URL_TIDEPOOL_PLUS_CONTACT_SALES = 'https://app.cronofy.com/add_to_calendar/scheduling/-hq0nDA6';
+export const URL_TIDEPOOL_EXTERNAL_DATA_CONNECTIONS = 'https://support.tidepool.org/hc/en-us/articles/34686287140884';
 
 export const TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL = 'bigdata@tidepool.org';
 
@@ -39,7 +40,7 @@ export const DATA_DONATION_NONPROFITS = () => [
   { value: 'DYF', label: t('Diabetes Youth Families (DYF)') },
   { value: 'DIABETESSISTERS', label: t('DiabetesSisters') },
   { value: 'DIATRIBE', label: t('The diaTribe Foundation') },
-  { value: 'JDRF', label: t('JDRF') },
+  { value: 'JDRF', label: t('Breakthrough T1D') },
   { value: 'NSF', label: t('Nightscout Foundation') },
   { value: 'T1DX', label: t('T1D Exchange') },
 ];
@@ -47,6 +48,7 @@ export const DATA_DONATION_NONPROFITS = () => [
 export const DIABETES_TYPES = () => [
   { value: 'type1', label: t('Type 1') },
   { value: 'type2', label: t('Type 2') },
+  { value: 'type3c', label: t('Type 3c') },
   { value: 'gestational', label: t('Gestational') },
   { value: 'prediabetes', label: t('Pre-diabetes') },
   { value: 'lada', label: t('LADA (Type 1.5)') },
@@ -90,19 +92,10 @@ export const MS_IN_MIN = MS_IN_HOUR / 60;
 
 export const LBS_PER_KG = 2.2046226218;
 
-// Passed as arguments to utils.formatThresholdPercentage
-// [comparator, threshold, defaultPrecision = 0]
-export const DEFAULT_FILTER_THRESHOLDS = {
-  veryLow: ['>', 1],
-  low: ['>', 4],
-  target: ['<', 70],
-  high: ['>', 25],
-  veryHigh: ['>', 5],
-  extremeHigh: ['>', 1],
-  cgmUse: ['<', 70],
-  timeInTargetPercentDelta: ['>', 15, 1],
-};
-
 export const DEFAULT_CLINIC_TIER = 'tier0100';
 export const DEFAULT_CLINIC_PATIENT_COUNT_HARD_LIMIT = 250;
 export const CLINIC_REMAINING_PATIENTS_WARNING_THRESHOLD = 40;
+
+export const DEFAULT_CGM_SAMPLE_INTERVAL = 5 * MS_IN_MIN;
+export const DEFAULT_CGM_SAMPLE_INTERVAL_RANGE = [DEFAULT_CGM_SAMPLE_INTERVAL, Infinity];
+export const ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE = [MS_IN_MIN, MS_IN_MIN];

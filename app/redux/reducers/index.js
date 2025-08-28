@@ -19,6 +19,7 @@ import { combineReducers } from 'redux';
 import working from './working';
 import pdf from './pdf';
 import data from './data';
+import patientListFilters from './patientListFilters';
 
 import {
   bgPrefs,
@@ -41,18 +42,12 @@ import {
   resentEmailVerification,
   sentEmailVerification,
   showingWelcomeMessage,
-  showingDonateBanner,
-  showingDexcomConnectBanner,
-  showingPatientLimitBanner,
-  showingShareDataBanner,
-  seenShareDataBannerMax,
-  showingUpdateTypeBanner,
-  showingUploaderBanner,
   timePrefs,
   signupKey,
   dataDonationAccounts,
   dataSources,
   authorizedDataSource,
+  justConnectedDataSourceProviderName,
   clinics,
   selectedClinicId,
   pendingSentClinicianInvites,
@@ -86,18 +81,12 @@ export default combineReducers({
   resentEmailVerification,
   sentEmailVerification,
   showingWelcomeMessage,
-  showingDonateBanner,
-  showingDexcomConnectBanner,
-  showingPatientLimitBanner,
-  showingShareDataBanner,
-  seenShareDataBannerMax,
-  showingUpdateTypeBanner,
-  showingUploaderBanner,
   timePrefs,
   signupKey,
   dataDonationAccounts,
   dataSources,
   authorizedDataSource,
+  justConnectedDataSourceProviderName,
   clinics,
   selectedClinicId,
   pendingSentClinicianInvites,
@@ -111,4 +100,5 @@ export default combineReducers({
   data,
   working,
   pendoData,
+  patientListFilters,
 });

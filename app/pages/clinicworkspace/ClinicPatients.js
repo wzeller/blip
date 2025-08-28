@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useDispatch, useSelector } from 'react-redux';
 import { push } from 'connected-react-router';
-import { withTranslation, Trans } from 'react-i18next';
+import { withTranslation, Trans, useTranslation } from 'react-i18next';
 import moment from 'moment';
 import compact from 'lodash/compact';
 import debounce from 'lodash/debounce';
@@ -22,11 +22,11 @@ import omit from 'lodash/omit';
 import orderBy from 'lodash/orderBy';
 import pick from 'lodash/pick';
 import reject from 'lodash/reject';
+import upperFirst from 'lodash/upperFirst';
 import values from 'lodash/values';
 import without from 'lodash/without';
-import { Box, Flex, Link, Text } from 'theme-ui';
+import { Box, Flex, Link, Text, Grid } from 'theme-ui';
 import AddIcon from '@material-ui/icons/Add';
-import CheckRoundedIcon from '@material-ui/icons/CheckRounded';
 import CloseRoundedIcon from '@material-ui/icons/CloseRounded';
 import DeleteIcon from '@material-ui/icons/DeleteRounded';
 import DoubleArrowIcon from '@material-ui/icons/DoubleArrow';
@@ -38,13 +38,17 @@ import SearchIcon from '@material-ui/icons/Search';
 import VisibilityOffOutlinedIcon from '@material-ui/icons/VisibilityOffOutlined';
 import VisibilityOutlinedIcon from '@material-ui/icons/VisibilityOutlined';
 import ArrowUpwardIcon from '@material-ui/icons/ArrowUpward';
-import { components as vizComponents, utils as vizUtils } from '@tidepool/viz';
+import ErrorRoundedIcon from '@material-ui/icons/ErrorRounded';
+import { components as vizComponents, utils as vizUtils, colors as vizColors } from '@tidepool/viz';
+const { GLYCEMIC_RANGE } = vizUtils.constants;
 import sundial from 'sundial';
 import ScrollToTop from 'react-scroll-to-top';
 import styled from '@emotion/styled';
 import { scroller } from 'react-scroll';
 import { Formik, Form } from 'formik';
 import { useFlags, useLDClient } from 'launchdarkly-react-client-sdk';
+import { Link as RouterLink } from 'react-router-dom';
+import useClinicPatientsFilters, { defaultFilterState } from './useClinicPatientsFilters';
 
 import {
   bindPopover,
@@ -77,6 +81,7 @@ import Popover from '../../components/elements/Popover';
 import RadioGroup from '../../components/elements/RadioGroup';
 import Checkbox from '../../components/elements/Checkbox';
 import FilterIcon from '../../core/icons/FilterIcon.svg';
+import DataInIcon from '../../core/icons/DataInIcon.svg';
 import SendEmailIcon from '../../core/icons/SendEmailIcon.svg';
 import TabularReportIcon from '../../core/icons/TabularReportIcon.svg';
 import utils from '../../core/utils';
@@ -96,20 +101,26 @@ import { fieldsAreValid, getCommonFormikFieldProps } from '../../core/forms';
 
 import {
   patientSchema as validationSchema,
+  clinicSiteSchema,
   clinicPatientTagSchema,
   lastDataFilterOptions,
   tideDashboardConfigSchema,
   rpmReportConfigSchema,
   maxClinicPatientTags,
+  maxWorkspaceClinicSites,
 } from '../../core/clinicUtils';
 
-import { MGDL_UNITS, MMOLL_UNITS, URL_TIDEPOOL_PLUS_PLANS } from '../../core/constants';
-import { borders, radii, colors, space, fontWeights } from '../../themes/baseTheme';
+import { DIABETES_TYPES, MGDL_UNITS, MMOLL_UNITS, URL_TIDEPOOL_PLUS_PLANS } from '../../core/constants';
+import baseTheme, { borders, radii, colors, space, fontWeights } from '../../themes/baseTheme';
 import PopoverElement from '../../components/elements/PopoverElement';
+import DataConnectionsModal from '../../components/datasources/DataConnectionsModal';
+import Banner from '../../components/elements/Banner';
+import colorPalette from '../../themes/colorPalette';
+import noop from 'lodash/noop';
 
 const { Loader } = vizComponents;
 const { reshapeBgClassesToBgBounds, generateBgRangeLabels, formatBgValue } = vizUtils.bg;
-const { getLocalizedCeiling, getTimezoneFromTimePrefs, formatTimeAgo } = vizUtils.datetime;
+const { getLocalizedCeiling, formatTimeAgo } = vizUtils.datetime;
 
 const StyledScrollToTop = styled(ScrollToTop)`
   background-color: ${colors.purpleMedium};
@@ -119,20 +130,13 @@ const StyledScrollToTop = styled(ScrollToTop)`
   padding-top: 4px;
 `;
 
-const defaultFilterState = {
-  timeCGMUsePercent: null,
-  lastData: null,
-  lastDataType: null,
-  timeInRange: [],
-  meetsGlycemicTargets: true,
-  patientTags: [],
-};
-
 const glycemicTargetThresholds = {
   timeInVeryLowPercent: { value: 1, comparator: '>' },
   timeInLowPercent: { value: 4, comparator: '>' },
+  timeInAnyLowPercent: { value: 4, comparator: '>' },
   timeInTargetPercent: { value: 70, comparator: '<' },
   timeInHighPercent: { value: 25, comparator: '>' },
+  timeInAnyHighPercent: { value: 25, comparator: '>' },
   timeInVeryHighPercent: { value: 5, comparator: '>' },
   timeInExtremeHighPercent: { value: 1, comparator: '>' },
 };
@@ -143,6 +147,161 @@ const editPatient = (patient, setSelectedPatient, selectedClinicId, trackMetric,
   setShowEditPatientDialog(true);
 };
 
+const editPatientDataConnections = (patient, setSelectedPatient, selectedClinicId, trackMetric, setShowDataConnectionsModal, source) => {
+  trackMetric('Clinic - Edit patient data connections', { clinicId: selectedClinicId, source });
+  setSelectedPatient(patient);
+  setShowDataConnectionsModal(true);
+};
+
+const ClearButton = styled.button`
+  background: none;
+  color: ${vizColors.indigo30};
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-underline-offset: 4px;
+  text-decoration: underline;
+`;
+
+export const PATIENT_LIST_QUERY_STATE = {
+  FILTER_AND_SEARCH: 'FILTER_AND_SEARCH',
+  FILTER_ONLY: 'FILTER_ONLY',
+  SEARCH_ONLY: 'SEARCH_ONLY',
+  NONE: 'NONE',
+};
+
+export const getPatientListQueryState = (
+  activeFilters = {},
+  patientListSearchTextInput = '',
+) => {
+  const { lastData, lastDataType, timeCGMUsePercent, timeInRange, clinicSites, patientTags } = activeFilters;
+
+  const hasFiltersActive = (
+    lastData ||
+    lastDataType ||
+    timeCGMUsePercent ||
+    timeInRange?.length > 0 ||
+    clinicSites?.length > 0 ||
+    patientTags?.length > 0
+  );
+
+  const hasSearchActive = !!patientListSearchTextInput;
+
+  if (hasFiltersActive && hasSearchActive) {
+    return PATIENT_LIST_QUERY_STATE.FILTER_AND_SEARCH;
+  } else if (hasFiltersActive) {
+    return PATIENT_LIST_QUERY_STATE.FILTER_ONLY;
+  } else if (hasSearchActive) {
+    return PATIENT_LIST_QUERY_STATE.SEARCH_ONLY;
+  }
+
+  return PATIENT_LIST_QUERY_STATE.NONE;
+};
+
+const EmptyContentNode = ({ patientListQueryState, children }) => {
+  const { t } = useTranslation();
+  const { FILTER_AND_SEARCH, FILTER_ONLY, SEARCH_ONLY, NONE } = PATIENT_LIST_QUERY_STATE;
+
+  const emptyContentCopyDefs = {
+    [FILTER_AND_SEARCH]: t('There are no patient accounts with the current filter(s) that match your search'),
+    [FILTER_ONLY]: t('There are no patient accounts with the current filter(s)'),
+    [SEARCH_ONLY]: t('There are no patient accounts that match your search'),
+    [NONE]: t('There are no results to show'),
+  };
+
+  const emptyContentCopy = emptyContentCopyDefs[patientListQueryState] || emptyContentCopyDefs[NONE];
+
+  return (
+    <Flex sx={{
+      backgroundColor: colorPalette.primary.bluePrimary00,
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: '90px',
+      flexDirection: 'column',
+      gap: 2,
+      marginBottom: 4,
+      borderBottom: '1px solid #D1D6E1',
+    }}>
+      <Text className="table-empty-text" sx={{ fontWeight: 'medium' }}>
+        {emptyContentCopy}
+      </Text>
+
+      {children}
+    </Flex>
+  );
+};
+
+const ClearFilterButtons = withTranslation()(({ t, patientListQueryState, onClearSearch, onResetFilters }) => {
+  const { FILTER_AND_SEARCH, FILTER_ONLY, SEARCH_ONLY, NONE } = PATIENT_LIST_QUERY_STATE;
+
+  switch(patientListQueryState) {
+    case SEARCH_ONLY:
+      return <Box>
+        <ClearButton className='clear-search-button' onClick={onClearSearch}>
+          {t('Clear Search')}
+        </ClearButton>
+      </Box>;
+
+    case FILTER_ONLY:
+      return <Box>
+        <ClearButton className='reset-filters-button' onClick={onResetFilters}>
+          {t('Reset Filters')}
+        </ClearButton>
+      </Box>;
+
+    case FILTER_AND_SEARCH:
+      return <Box>
+        <ClearButton className='reset-filters-button' onClick={onResetFilters}>
+          {t('Reset Filters')}
+        </ClearButton>
+        <>{' '}{t('or')}{' '}</>
+        <ClearButton className='clear-search-button' onClick={onClearSearch}>
+          {t('Clear Search')}
+        </ClearButton>
+      </Box>;
+
+    case NONE:
+    default:
+      return null;
+  }
+});
+
+const FilterResetBar = withTranslation()(({ t, rightSideContent, patientListQueryState }) => {
+  const selectedClinicId = useSelector((state) => state.blip.selectedClinicId);
+  const clinic = useSelector(state => state.blip.clinics?.[selectedClinicId]);
+  const count = clinic?.fetchedPatientCount || 0;
+
+  const { FILTER_AND_SEARCH, FILTER_ONLY, SEARCH_ONLY, NONE } = PATIENT_LIST_QUERY_STATE;
+
+  if (patientListQueryState === PATIENT_LIST_QUERY_STATE.NONE) return null; // hide when no search or filters applied
+
+  const fetchedPatientCountCopyDefs = {
+    [FILTER_AND_SEARCH]: t('Showing {{ count }} patient accounts with the current filter(s) that match your search', { count }),
+    [FILTER_ONLY]: t('Showing {{ count }} patient accounts with the current filter(s)', { count }),
+    [SEARCH_ONLY]: t('Showing {{ count }} patient accounts that match your search', { count }),
+    [NONE]: t('There are no results to show'),
+  };
+
+  const fetchedPatientCountCopy = fetchedPatientCountCopyDefs[patientListQueryState];
+
+  return (
+    <Flex
+      className='filter-reset-bar'
+      px={2}
+      py={2}
+      sx={{
+        backgroundColor: vizColors.blue00,
+        borderBottom: '1px solid #D1D6E1',
+        justifyContent: 'space-between',
+      }}
+    >
+      <Text sx={{ fontWeight: 'medium' }}>{fetchedPatientCountCopy}</Text>
+      <Box>{rightSideContent}</Box>
+    </Flex>
+  );
+});
+
 const MoreMenu = ({
   patient,
   isClinicAdmin,
@@ -151,6 +310,7 @@ const MoreMenu = ({
   t,
   trackMetric,
   setSelectedPatient,
+  setShowDataConnectionsModal,
   setShowEditPatientDialog,
   prefixPopHealthMetric,
   setShowSendUploadReminderDialog,
@@ -159,6 +319,10 @@ const MoreMenu = ({
   const handleEditPatient = useCallback(() => {
     editPatient(patient, setSelectedPatient, selectedClinicId, trackMetric, setShowEditPatientDialog, 'action menu');
   }, [patient, setSelectedPatient, selectedClinicId, trackMetric, setShowEditPatientDialog]);
+
+  const handleEditPatientDataConnections = useCallback(() => {
+    editPatientDataConnections(patient, setSelectedPatient, selectedClinicId, trackMetric, setShowDataConnectionsModal, 'action menu');
+  }, [patient, setSelectedPatient, selectedClinicId, trackMetric, setShowDataConnectionsModal]);
 
   const handleSendUploadReminder = useCallback(
     (patient) => {
@@ -199,6 +363,17 @@ const MoreMenu = ({
         handleEditPatient(patient);
       },
       text: t('Edit Patient Information'),
+    }, {
+      iconSrc: DataInIcon,
+      iconLabel: t('Bring Data into Tidepool'),
+      iconPosition: 'left',
+      id: `edit-data-connections-${patient.id}`,
+      variant: 'actionListItem',
+      onClick: (_popupState) => {
+        _popupState.close();
+        handleEditPatientDataConnections(patient);
+      },
+      text: t('Bring Data into Tidepool'),
     });
 
     if (showSummaryData && patient.email && !patient.permissions?.custodian) {
@@ -241,7 +416,7 @@ const MoreMenu = ({
     t,
   ]);
 
-  return <PopoverMenu id={`action-menu-${patient.id}`} items={items} />;
+  return <PopoverMenu id={`action-menu-${patient.id}`} data-testid={`action-menu-${patient.id}-icon`} items={items} />;
 };
 
 const PatientTags = ({
@@ -259,8 +434,10 @@ const PatientTags = ({
   trackMetric,
 }) => {
   const dispatch = useDispatch();
+  const { set: setToast } = useToasts();
+  const clinic = useSelector(state => state.blip.clinics?.[selectedClinicId]);
   const defaultPatientTags = reject(patient?.tags || [], tagId => !patientTags[tagId]);
-  const [pendingPatientTags, setPendingPatientTags] = useState(defaultPatientTags)
+  const [pendingPatientTags, setPendingPatientTags] = useState(defaultPatientTags);
 
   useEffect(() => {
     setPendingPatientTags(reject(patient?.tags || [], tagId => !patientTags[tagId]));
@@ -287,6 +464,10 @@ const PatientTags = ({
     editPatient(patient, setSelectedPatient, selectedClinicId, trackMetric, setShowEditPatientDialog, 'tag list');
   }, [patient, setSelectedPatient, selectedClinicId, trackMetric, setShowEditPatientDialog]);
 
+  // If clinic requires MRN but the patient lacks one, open Edit Patient modal instead of Add Tags dropdown
+  const hasMrnError = !patient.mrn && clinic?.mrnSettings?.required;
+  const addTagsBindTrigger = hasMrnError ? {} : bindTrigger(addPatientTagsPopupState); // if MRN error, do not pass bindTrigger
+
   return !!filteredPatientTags.length ? (
     <TagList
       maxTagsVisible={4}
@@ -298,7 +479,7 @@ const PatientTags = ({
     />
   ) : (
     <React.Fragment>
-      <Box {...bindTrigger(addPatientTagsPopupState)}>
+      <Box {...addTagsBindTrigger}>
         <Button
           id="add-tags-to-patient-trigger"
           variant="textPrimary"
@@ -310,6 +491,12 @@ const PatientTags = ({
           iconFontSize="16px"
           selected={addPatientTagsPopupState.isOpen && selectedPatient?.id === patient?.id}
           onClick={() => {
+            if (hasMrnError) {
+              handleEditPatient(patient);
+              setToast({ message: t('To add tags, please first add an MRN for this patient.'), variant: 'warning' });
+              return;
+            }
+
             trackMetric(prefixPopHealthMetric('Assign patient tag open'), { clinicId: selectedClinicId });
             setSelectedPatient(patient);
             addPatientTagsPopupState.open();
@@ -417,6 +604,7 @@ const PatientTags = ({
             id="show-edit-clinic-patient-tags-dialog"
             icon={EditIcon}
             iconPosition="left"
+            iconLabel="show-edit-clinic-patient-tags-dialog"
             sx={{ fontSize: 1 }}
             variant="textPrimary"
             onClick={() => {
@@ -432,6 +620,15 @@ const PatientTags = ({
   );
 };
 
+// If we HTTP GET `/patients` without a sites/tags query arg, we receive a list of PwDs with zero
+// or many sites/tags. We need to pass an explicit argument to request PwDs with exactly zero
+// sites/tags. By setting the filter to `['_']`, the query path is set to `/patients?sites=_` or
+// `/patients?tags=_`, which the backend understands as a request for PwDs with zero sites/tags
+export const SPECIAL_FILTER_STATES = {
+  ZERO_SITES: ['_'],
+  ZERO_TAGS: ['_'],
+};
+
 export const ClinicPatients = (props) => {
   const { t, api, trackMetric, searchDebounceMs } = props;
   const isFirstRender = useIsFirstRender();
@@ -445,28 +642,32 @@ export const ClinicPatients = (props) => {
   const rpmReportPatients = useSelector(state => state.blip.rpmReportPatients);
   const isClinicAdmin = includes(get(clinic, ['clinicians', loggedInUserId, 'roles'], []), 'CLINIC_ADMIN');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDeleteClinicSiteDialog, setShowDeleteClinicSiteDialog] = useState(false);
+  const [showUpdateClinicSiteDialog, setShowUpdateClinicSiteDialog] = useState(false);
   const [showDeleteClinicPatientTagDialog, setShowDeleteClinicPatientTagDialog] = useState(false);
   const [showUpdateClinicPatientTagDialog, setShowUpdateClinicPatientTagDialog] = useState(false);
   const [showAddPatientDialog, setShowAddPatientDialog] = useState(false);
   const [showRpmReportConfigDialog, setShowRpmReportConfigDialog] = useState(false);
   const [showRpmReportLimitDialog, setShowRpmReportLimitDialog] = useState(false);
   const [showTideDashboardConfigDialog, setShowTideDashboardConfigDialog] = useState(false);
+  const [showDataConnectionsModal, setShowDataConnectionsModal] = useState(false);
   const [showEditPatientDialog, setShowEditPatientDialog] = useState(false);
+  const [showClinicSitesDialog, setShowClinicSitesDialog] = useState(false);
   const [showClinicPatientTagsDialog, setShowClinicPatientTagsDialog] = useState(false);
   const [showTimeInRangeDialog, setShowTimeInRangeDialog] = useState(false);
   const [showSendUploadReminderDialog, setShowSendUploadReminderDialog] = useState(false);
-  const [showNames, setShowNames] = useState(false);
-  const [search, setSearch] = useState('');
   const [selectedPatient, setSelectedPatient] = useState(null);
   const existingMRNs = useMemo(
     () => compact(map(reject(clinic?.patients, { id: selectedPatient?.id }), 'mrn')),
     [clinic?.patients, selectedPatient?.id]
   );
+  const [selectedClinicSite, setSelectedClinicSite] = useState(null);
   const [selectedPatientTag, setSelectedPatientTag] = useState(null);
   const [loading, setLoading] = useState(false);
   const [patientFormContext, setPatientFormContext] = useState();
   const [rpmReportFormContext, setRpmReportFormContext] = useState();
   const [tideDashboardFormContext, setTideDashboardFormContext] = useState();
+  const [clinicSiteFormContext, setClinicSiteFormContext] = useState();
   const [clinicPatientTagFormContext, setClinicPatientTagFormContext] = useState();
   const [patientFetchMinutesAgo, setPatientFetchMinutesAgo] = useState();
   const statEmptyText = '--';
@@ -531,7 +732,7 @@ export const ClinicPatients = (props) => {
     [clinicBgUnits]
   );
 
-  const [activeFilters, setActiveFilters] = useLocalStorage('activePatientFilters', defaultFilterState, true);
+  const [activeFilters, setActiveFilters] = useClinicPatientsFilters();
   const [pendingFilters, setPendingFilters] = useState({ ...defaultFilterState, ...activeFilters });
   const previousActiveFilters = usePrevious(activeFilters);
 
@@ -554,12 +755,20 @@ export const ClinicPatients = (props) => {
     { value: '30d', label: t('30 days') },
   ];
 
+  const clinicSites = useMemo(() => keyBy(clinic?.sites, 'id'), [clinic?.sites]);
   const patientTags = useMemo(() => keyBy(clinic?.patientTags, 'id'), [clinic?.patientTags]);
 
-  const patientTagsFilterOptions = useMemo(
-    () => map(clinic?.patientTags, ({ id, name }) => ({ id, label: name })),
-    [clinic?.patientTags]
-  );
+  const clinicSitesFilterOptions = useMemo(() => {
+    const options = map(clinic?.sites, ({ id, name }) => ({ id, label: name }));
+
+    return orderBy(options, 'label');
+  }, [clinic?.sites]);
+
+  const patientTagsFilterOptions = useMemo(() => {
+    const options = map(clinic?.patientTags, ({ id, name }) => ({ id, label: name }));
+
+    return orderBy(options, 'label');
+  }, [clinic?.patientTags]);
 
   const defaultSummaryPeriod = '14d';
   const [activeSummaryPeriod, setActiveSummaryPeriod] = useLocalStorage('activePatientSummaryPeriod', defaultSummaryPeriod);
@@ -574,6 +783,11 @@ export const ClinicPatients = (props) => {
   const lastDataPopupFilterState = usePopupState({
     variant: 'popover',
     popupId: 'lastDataFilters',
+  });
+
+  const clinicSitesPopupFilterState = usePopupState({
+    variant: 'popover',
+    popupId: 'clinicSitesFilters',
   });
 
   const patientTagsPopupFilterState = usePopupState({
@@ -606,12 +820,17 @@ export const ClinicPatients = (props) => {
     updatingClinicPatient,
     creatingClinicCustodialAccount,
     sendingPatientUploadReminder,
+    creatingClinicSite,
+    updatingClinicSite,
     creatingClinicPatientTag,
     updatingClinicPatientTag,
+    deletingClinicSite,
     deletingClinicPatientTag,
     fetchingTideDashboardPatients,
     fetchingRpmReportPatients,
   } = useSelector((state) => state.blip.working);
+
+  const { patientListSearchTextInput, isPatientListVisible } = useSelector(({ blip }) => blip.patientListFilters);
 
   // TODO: remove this when upgraded to React 18
   // force another render when fetching patients state changes
@@ -625,12 +844,54 @@ export const ClinicPatients = (props) => {
   const previousSendingPatientUploadReminder = usePrevious(sendingPatientUploadReminder);
   const previousUpdatingClinicPatient = usePrevious(updatingClinicPatient);
   const previousCreatingClinicCustodialAccount = usePrevious(creatingClinicCustodialAccount);
+  const previousCreatingClinicSite = usePrevious(creatingClinicSite);
+  const previousUpdatingClinicSite = usePrevious(updatingClinicSite);
+  const previousDeletingClinicSite = usePrevious(deletingClinicSite);
   const previousCreatingClinicPatientTag = usePrevious(creatingClinicPatientTag);
   const previousUpdatingClinicPatientTag = usePrevious(updatingClinicPatientTag);
   const previousDeletingClinicPatientTag = usePrevious(deletingClinicPatientTag);
   const previousFetchingRpmReportPatients = usePrevious(fetchingRpmReportPatients);
 
   const prefixPopHealthMetric = useCallback(metric => `Clinic - Population Health - ${metric}`, []);
+
+  const handleCloseOverlays = useCallback(() => {
+    const resetList = showAddPatientDialog || showEditPatientDialog;
+    setShowAddPatientDialog(false);
+    setShowDeleteDialog(false);
+    setShowDataConnectionsModal(false);
+    setShowEditPatientDialog(false);
+    setShowClinicPatientTagsDialog(false);
+    setShowClinicSitesDialog(false);
+    setShowTimeInRangeDialog(false);
+    setShowSendUploadReminderDialog(false);
+    setShowTideDashboardConfigDialog(false);
+    setShowRpmReportConfigDialog(false);
+    setShowRpmReportLimitDialog(false);
+
+    if (resetList) {
+      setPatientFetchOptions({ ...patientFetchOptions });
+    }
+
+    setTimeout(() => {
+      setPatientFormContext(null);
+      setSelectedPatient(null);
+    });
+  }, [
+    showAddPatientDialog,
+    showEditPatientDialog,
+    patientFetchOptions,
+  ]);
+
+  const handleCloseClinicSiteUpdateDialog = useCallback(metric => {
+    if (metric) trackMetric(prefixPopHealthMetric(metric, { clinicId: selectedClinicId }));
+    setShowDeleteClinicSiteDialog(false);
+    setShowUpdateClinicSiteDialog(false);
+
+    setTimeout(() => {
+      clinicSiteFormContext?.resetForm();
+      setSelectedClinicSite(null);
+    });
+  }, [clinicSiteFormContext, prefixPopHealthMetric, selectedClinicId, trackMetric]);
 
   const handleCloseClinicPatientTagUpdateDialog = useCallback(metric => {
     if (metric) trackMetric(prefixPopHealthMetric(metric, { clinicId: selectedClinicId }));
@@ -666,38 +927,51 @@ export const ClinicPatients = (props) => {
     }
   }, [isFirstRender, setToast]);
 
-  useEffect(() => {
-    handleAsyncResult({ ...updatingClinicPatient, prevInProgress: previousUpdatingClinicPatient?.inProgress }, t('You have successfully updated a patient.'), () => {
-      handleCloseOverlays();
+  const handlePatientCreatedOrEdited = useCallback(() => {
+    if (patientFormContext?.status?.showDataConnectionsModalNext) {
+      let currentPatient = selectedPatient;
 
-      if (patientFormContext?.status === 'sendingDexcomConnectRequest') {
-        dispatch(actions.async.sendPatientDexcomConnectRequest(api, selectedClinicId, updatingClinicPatient.patientId));
-      }
-    });
+      if (patientFormContext?.status?.newPatient && creatingClinicCustodialAccount?.patientId) currentPatient = {
+        ...patientFormContext.status.newPatient,
+        id: creatingClinicCustodialAccount.patientId,
+      };
+
+      setShowAddPatientDialog(false);
+      setShowEditPatientDialog(false);
+      editPatientDataConnections(currentPatient, setSelectedPatient, selectedClinicId, trackMetric, setShowDataConnectionsModal, 'Patients list - patient modal');
+    } else {
+      handleCloseOverlays();
+    }
   }, [
-    api,
-    dispatch,
+    handleCloseOverlays,
+    patientFormContext?.status,
+    creatingClinicCustodialAccount,
     selectedClinicId,
+    selectedPatient,
+    trackMetric,
+  ]);
+
+  useEffect(() => {
+    // Only process detected updates if patient edit form is showing. Other child components, such as
+    // the PatientEmailModal, may also update the patient, and handle the results
+    if (showEditPatientDialog) {
+      handleAsyncResult({ ...updatingClinicPatient, prevInProgress: previousUpdatingClinicPatient?.inProgress }, t('You have successfully updated a patient.'), handlePatientCreatedOrEdited);
+    }
+  }, [
     handleAsyncResult,
+    handlePatientCreatedOrEdited,
     t,
     updatingClinicPatient,
     patientFormContext?.status,
     previousUpdatingClinicPatient?.inProgress,
+    showEditPatientDialog,
   ]);
 
   useEffect(() => {
-    handleAsyncResult({ ...creatingClinicCustodialAccount, prevInProgress: previousCreatingClinicCustodialAccount?.inProgress }, t('You have successfully added a new patient.'), () => {
-      handleCloseOverlays();
-
-      if (patientFormContext?.status === 'sendingDexcomConnectRequest') {
-        dispatch(actions.async.sendPatientDexcomConnectRequest(api, selectedClinicId, creatingClinicCustodialAccount.patientId));
-      }
-    });
+    handleAsyncResult({ ...creatingClinicCustodialAccount, prevInProgress: previousCreatingClinicCustodialAccount?.inProgress }, t('You have successfully added a new patient.'), handlePatientCreatedOrEdited);
   }, [
-    api,
-    dispatch,
-    selectedClinicId,
     handleAsyncResult,
+    handlePatientCreatedOrEdited,
     t,
     creatingClinicCustodialAccount,
     patientFormContext?.status,
@@ -712,6 +986,18 @@ export const ClinicPatients = (props) => {
   }, [fetchingRpmReportPatients, rpmReportPatients, handleAsyncResult, handleCloseOverlays, previousFetchingRpmReportPatients?.inProgress, t]);
 
   useEffect(() => {
+    handleAsyncResult({ ...creatingClinicSite, prevInProgress: previousCreatingClinicSite?.inProgress }, t('Site created.'), () => clinicSiteFormContext?.resetForm());
+  }, [clinicSiteFormContext, creatingClinicSite, handleAsyncResult, previousCreatingClinicSite?.inProgress, t]);
+
+  useEffect(() => {
+    handleAsyncResult({ ...updatingClinicSite, prevInProgress: previousUpdatingClinicSite?.inProgress }, t('Site updated.'), handleCloseClinicSiteUpdateDialog);
+  }, [clinicSiteFormContext, updatingClinicSite, handleAsyncResult, previousUpdatingClinicSite?.inProgress, t]);
+
+  useEffect(() => {
+    handleAsyncResult({ ...deletingClinicSite, prevInProgress: previousDeletingClinicSite?.inProgress }, t('Site removed.'), handleCloseClinicSiteUpdateDialog);
+  }, [deletingClinicSite, handleAsyncResult, handleCloseClinicSiteUpdateDialog, previousDeletingClinicSite?.inProgress, t]);
+
+  useEffect(() => {
     handleAsyncResult({ ...creatingClinicPatientTag, prevInProgress: previousCreatingClinicPatientTag?.inProgress }, t('Tag created.'), () => clinicPatientTagFormContext?.resetForm());
   }, [clinicPatientTagFormContext, creatingClinicPatientTag, handleAsyncResult, previousCreatingClinicPatientTag?.inProgress, t]);
 
@@ -724,13 +1010,27 @@ export const ClinicPatients = (props) => {
   }, [deletingClinicPatientTag, handleAsyncResult, handleCloseClinicPatientTagUpdateDialog, previousDeletingClinicPatientTag?.inProgress, t]);
 
   useEffect(() => {
-    // If a tag is deleted or otherwise missing, and is still present in an active filter, remove it from the filters
+    // Prevent this effect from firing on logout, which would clear all patient tags and clinic sites from localStorage
+    if (!clinic) return;
+
+    // If a tag or site is deleted or otherwise missing, and is still present in an active filter, remove it from the filters
     const missingTagsInFilter = difference(activeFilters.patientTags, map(patientTags, 'id'));
-    if (missingTagsInFilter.length) {
-      setActiveFilters({ ...activeFilters, patientTags: without(activeFilters.patientTags, ...missingTagsInFilter) });
-      setPendingFilters({ ...pendingFilters, patientTags: without(activeFilters.patientTags, ...missingTagsInFilter) });
+    const missingSitesInFilter = difference(activeFilters.clinicSites, map(clinicSites, 'id'));
+
+    if (missingTagsInFilter.length || missingSitesInFilter.length) {
+      setActiveFilters({
+        ...activeFilters,
+        patientTags: without(activeFilters.patientTags, ...missingTagsInFilter),
+        clinicSites: without(activeFilters.clinicSites, ...missingSitesInFilter),
+      });
+
+      setPendingFilters({
+        ...pendingFilters,
+        patientTags: without(activeFilters.patientTags, ...missingTagsInFilter),
+        clinicSites: without(activeFilters.clinicSites, ...missingSitesInFilter),
+      });
     }
-  }, [patientTags]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [patientTags, clinicSites]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const successMessage = t('{{name}} has been removed from the clinic.', {
@@ -765,8 +1065,8 @@ export const ClinicPatients = (props) => {
 
       // For subsequent patient fetches, such as When filtering or searching, we can assume that
       // the user would like to see the results
-      if (!showNames && patientFetchCount > 0) {
-        setShowNames(true);
+      if (!isPatientListVisible && patientFetchCount > 0) {
+        dispatch(actions.sync.setIsPatientListVisible(true));
       }
       setPatientFetchCount(patientFetchCount+1);
       let newPage = patientFetchOptions.offset / patientFetchOptions.limit + 1;
@@ -786,7 +1086,7 @@ export const ClinicPatients = (props) => {
     patientFetchOptions.offset,
     previousFetchingPatientsForClinic?.inProgress,
     setToast,
-    showNames,
+    isPatientListVisible,
   ]);
 
   useEffect(() => {
@@ -858,7 +1158,7 @@ export const ClinicPatients = (props) => {
         sortType: showSummaryData && activeSort?.sortType ? activeSort.sortType : defaultPatientFetchOptions.sortType,
         period: activeSummaryPeriod,
         limit: 50,
-        search: patientFetchOptions.search,
+        search: patientListSearchTextInput,
       }
 
       if (isEmpty(filterOptions.search)) delete filterOptions.search;
@@ -873,6 +1173,10 @@ export const ClinicPatients = (props) => {
         if (activeFilters.lastData && activeFilters.lastDataType) {
           filterOptions[`${activeFilters.lastDataType}.lastDataTo`] = getLocalizedCeiling(new Date().toISOString(), timePrefs).toISOString();
           filterOptions[`${activeFilters.lastDataType}.lastDataFrom`] = moment(filterOptions[`${activeFilters.lastDataType}.lastDataTo`]).subtract(activeFilters.lastData, 'days').toISOString();
+        }
+
+        if (activeFilters.clinicSites?.length) {
+          filterOptions['sites'] = activeFilters.clinicSites;
         }
 
         if (activeFilters.patientTags?.length) {
@@ -901,12 +1205,13 @@ export const ClinicPatients = (props) => {
           'bgm.lastDataTo',
           'cgm.lastDataFrom',
           'cgm.lastDataTo',
+          'sites',
           'tags',
           'cgm.timeCGMUsePercent',
           'cgm.timeInVeryLowPercent',
-          'cgm.timeInLowPercent',
+          'cgm.timeInAnyLowPercent',
           'cgm.timeInTargetPercent',
-          'cgm.timeInHighPercent',
+          'cgm.timeInAnyHighPercent',
           'cgm.timeInVeryHighPercent',
           'cgm.timeInExtremeHighPercent',
         ]),
@@ -974,12 +1279,12 @@ export const ClinicPatients = (props) => {
 
   const handleToggleShowNames = useCallback(() => {
     const metric = showSummaryData
-      ? prefixPopHealthMetric(`${showNames ? 'Hide' : 'Show'} all icon`)
-      : `Clicked ${showNames ? 'Hide' : 'Show'} All`;
+      ? prefixPopHealthMetric(`${isPatientListVisible ? 'Hide' : 'Show'} all icon`)
+      : `Clicked ${isPatientListVisible ? 'Hide' : 'Show'} All`;
 
     trackMetric(metric, { clinicId: selectedClinicId });
-    setShowNames(!showNames);
-  }, [prefixPopHealthMetric, selectedClinicId, showNames, showSummaryData, trackMetric]);
+    dispatch(actions.sync.setIsPatientListVisible(!isPatientListVisible));
+  }, [prefixPopHealthMetric, selectedClinicId, isPatientListVisible, showSummaryData, trackMetric]);
 
   const handleClickPatient = useCallback(patient => {
     return () => {
@@ -1008,6 +1313,12 @@ export const ClinicPatients = (props) => {
     }
     patientFormContext?.handleSubmit();
   }, [patientFormContext, selectedClinicId, trackMetric, selectedPatient?.tags, prefixPopHealthMetric]);
+
+  const handleEditPatientAndAddDataSourcesConfirm = useCallback(() => {
+    trackMetric('Clinic - Edit patient next', { clinicId: selectedClinicId, source: 'Patients list' });
+    patientFormContext?.setStatus({ showDataConnectionsModalNext: true });
+    handleEditPatientConfirm();
+  }, [patientFormContext, selectedClinicId, trackMetric, handleEditPatientConfirm]);
 
   function handleConfigureTideDashboard() {
     if (validateTideConfig(tideDashboardConfig[localConfigKey], patientTags)) {
@@ -1039,10 +1350,21 @@ export const ClinicPatients = (props) => {
     rpmReportFormContext?.handleSubmit();
   }, [rpmReportFormContext, selectedClinicId, trackMetric]);
 
+  const handleCreateClinicSite = useCallback(site => {
+    trackMetric('Clinic - Create clinic site', { clinicId: selectedClinicId });
+    dispatch(actions.async.createClinicSite(api, selectedClinicId, site));
+  }, [api, dispatch, selectedClinicId, trackMetric]);
+
   const handleCreateClinicPatientTag = useCallback(tag => {
     trackMetric('Clinic - Create patient tag', { clinicId: selectedClinicId });
     dispatch(actions.async.createClinicPatientTag(api, selectedClinicId, tag));
   }, [api, dispatch, selectedClinicId, trackMetric]);
+
+  const handleUpdateClinicSite = useCallback(siteId => {
+    trackMetric(prefixPopHealthMetric('Edit clinic sites update'), { clinicId: selectedClinicId });
+    setSelectedClinicSite(clinicSites[siteId]);
+    setShowUpdateClinicSiteDialog(true);
+  }, [selectedClinicId, clinicSites, trackMetric, prefixPopHealthMetric]);
 
   const handleUpdateClinicPatientTag = useCallback(tagId => {
     trackMetric(prefixPopHealthMetric('Edit clinic tags update'), { clinicId: selectedClinicId });
@@ -1050,16 +1372,32 @@ export const ClinicPatients = (props) => {
     setShowUpdateClinicPatientTagDialog(true);
   }, [selectedClinicId, patientTags, trackMetric, prefixPopHealthMetric]);
 
+  const handleUpdateClinicSiteConfirm = useCallback(site => {
+    trackMetric(prefixPopHealthMetric('Edit clinic sites confirm update site'), { clinicId: selectedClinicId });
+    dispatch(actions.async.updateClinicSite(api, selectedClinicId, selectedClinicSite?.id, site));
+  }, [api, dispatch, selectedClinicId, selectedClinicSite?.id, trackMetric, prefixPopHealthMetric]);
+
   const handleUpdateClinicPatientTagConfirm = useCallback(tag => {
     trackMetric(prefixPopHealthMetric('Edit clinic tags confirm update tag'), { clinicId: selectedClinicId });
     dispatch(actions.async.updateClinicPatientTag(api, selectedClinicId, selectedPatientTag?.id, tag));
   }, [api, dispatch, selectedClinicId, selectedPatientTag?.id, trackMetric, prefixPopHealthMetric]);
 
+  const handleDeleteClinicSite = useCallback(siteId => {
+    trackMetric(prefixPopHealthMetric('Edit clinic sites delete'), { clinicId: selectedClinicId });
+    setSelectedClinicSite(clinicSites[siteId]);
+    setShowDeleteClinicSiteDialog(true);
+  }, [selectedClinicId, clinicSites, trackMetric, prefixPopHealthMetric]);
+
   const handleDeleteClinicPatientTag = useCallback(tagId => {
     trackMetric(prefixPopHealthMetric('Edit clinic tags delete'), { clinicId: selectedClinicId });
     setSelectedPatientTag(patientTags[tagId]);
     setShowDeleteClinicPatientTagDialog(true);
-  }, [selectedClinicId, patientTags, trackMetric, prefixPopHealthMetric])
+  }, [selectedClinicId, patientTags, trackMetric, prefixPopHealthMetric]);
+
+  const handleDeleteClinicSiteConfirm = useCallback(() => {
+    trackMetric(prefixPopHealthMetric('Edit clinic sites confirm delete site'), { clinicId: selectedClinicId });
+    dispatch(actions.async.deleteClinicSite(api, selectedClinicId, selectedClinicSite?.id));
+  }, [api, dispatch, selectedClinicId, selectedClinicSite?.id, trackMetric, prefixPopHealthMetric]);
 
   const handleDeleteClinicPatientTagConfirm = useCallback(() => {
     trackMetric(prefixPopHealthMetric('Edit clinic tags confirm delete tag'), { clinicId: selectedClinicId });
@@ -1084,7 +1422,7 @@ export const ClinicPatients = (props) => {
   }
 
   function handleSearchChange(event) {
-    setSearch(event.target.value);
+    dispatch(actions.sync.setPatientListSearchTextInput(event.target.value));
     setLoading(true);
     debounceSearch(event.target.value);
   }
@@ -1110,6 +1448,11 @@ export const ClinicPatients = (props) => {
 
       const sortColumnLabels = {
         fullName: 'Patient details',
+        lastData: 'Data recency',
+        glucoseManagementIndicator: 'GMI',
+        averageGlucoseMmol: 'Average glucose',
+        timeInVeryLowRecords: 'Time in very low',
+        timeInVeryHighRecords: 'Time in very high',
         'summary.lastData': 'Data recency',
         [`summary.periods.${activeSummaryPeriod}.timeCGMUsePercent`]: 'CGM use',
         [`summary.periods.${activeSummaryPeriod}.glucoseManagementIndicator`]: 'GMI',
@@ -1131,7 +1474,7 @@ export const ClinicPatients = (props) => {
   ]);
 
   function handleClearSearch() {
-    setSearch('');
+    dispatch(actions.sync.setPatientListSearchTextInput(''));
     setLoading(true);
     debounceSearch('');
   }
@@ -1159,9 +1502,9 @@ export const ClinicPatients = (props) => {
       clinicId: selectedClinicId,
       meetsCriteria: pendingFilters.meetsGlycemicTargets,
       severeHypo: includes(pendingFilters.timeInRange, 'timeInVeryLowPercent'),
-      hypo: includes(pendingFilters.timeInRange, 'timeInLowPercent'),
+      hypo: includes(pendingFilters.timeInRange, 'timeInAnyLowPercent'),
       inRange: includes(pendingFilters.timeInRange, 'timeInTargetPercent'),
-      hyper: includes(pendingFilters.timeInRange, 'timeInHighPercent'),
+      hyper: includes(pendingFilters.timeInRange, 'timeInAnyHighPercent'),
       severeHyper: includes(pendingFilters.timeInRange, 'timeInVeryHighPercent'),
       extremeHyper: includes(pendingFilters.timeInRange, 'timeInExtremeHighPercent'),
     });
@@ -1196,12 +1539,22 @@ export const ClinicPatients = (props) => {
       activeFilters.patientTags?.length,
     ], null, 0, undefined).length;
 
-    const VisibilityIcon = showNames ? VisibilityOffOutlinedIcon : VisibilityOutlinedIcon;
+    const sortedSiteFilterOptions = clinicSitesFilterOptions?.toSorted((a, b) => utils.compareLabels(a.label, b.label)) || [];
+    const sortedTagFilterOptions = patientTagsFilterOptions?.toSorted((a, b) => utils.compareLabels(a.label, b.label)) || [];
+
+    const VisibilityIcon = isPatientListVisible ? VisibilityOffOutlinedIcon : VisibilityOutlinedIcon;
     const hoursAgo = Math.floor(patientFetchMinutesAgo / 60);
     let timeAgoUnits = hoursAgo < 2 ? t('hour') : t('hours');
     let timeAgo = hoursAgo === 0 ? t('less than an') : t('over {{hoursAgo}}', { hoursAgo });
     if (hoursAgo >= 24) timeAgo = t('over 24');
     const timeAgoMessage = t('Last updated {{timeAgo}} {{timeAgoUnits}} ago', { timeAgo, timeAgoUnits });
+
+    // Filtering for patients "zero sites/tags" is different than not filtering. If we don't pass any filters
+    // to backend, we receive a list of PwDs with zero or many sites/tags. We need to explicitly filter for
+    // PwDs with exactly zero sites/tags.
+    const isFilteringForZeroSites = isEqual(pendingFilters?.clinicSites, SPECIAL_FILTER_STATES.ZERO_SITES);
+    const isFilteringForZeroTags = isEqual(pendingFilters?.patientTags, SPECIAL_FILTER_STATES.ZERO_TAGS);
+
     return (
       <>
         <Flex mb={4} sx={{ alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 3 }}>
@@ -1316,12 +1669,12 @@ export const ClinicPatients = (props) => {
                     sx={{ fontSize: 0 }}
                     id="patients-search"
                     placeholder={t('Search')}
-                    icon={!isEmpty(search) ? CloseRoundedIcon : SearchIcon}
+                    icon={!isEmpty(patientListSearchTextInput) ? CloseRoundedIcon : SearchIcon}
                     iconLabel={t('Search')}
-                    onClickIcon={!isEmpty(search) ? handleClearSearch : null}
+                    onClickIcon={!isEmpty(patientListSearchTextInput) ? handleClearSearch : null}
                     name="search-patients"
                     onChange={handleSearchChange}
-                    value={search}
+                    value={patientListSearchTextInput}
                     variant="condensed"
                   />
                 </Flex>
@@ -1492,36 +1845,189 @@ export const ClinicPatients = (props) => {
                     </DialogActions>
                   </Popover>
 
-                  <Button
-                    id="time-in-range-filter-trigger"
-                    variant="filter"
-                    selected={!!activeFilters.timeInRange?.length}
-                    onClick={handleOpenTimeInRangeFilter}
-                    icon={KeyboardArrowDownRoundedIcon}
-                    iconLabel="Filter by Time In Range"
-                    sx={{ fontSize: 0, lineHeight: 1.3, flexShrink: 0 }}
+                  <Box
+                    onClick={() => {
+                      if (!clinicSitesPopupFilterState.isOpen) trackMetric(prefixPopHealthMetric('clinic sites filter open'), { clinicId: selectedClinicId });
+                    }}
+                    sx={{ flexShrink: 0 }}
                   >
-                    <Flex sx={{ gap: 1 }}>
-                      {t('% Time in Range')}
-                      {!!activeFilters.timeInRange?.length && (
-                        <Pill
-                          id="time-in-range-filter-count"
-                          label="filter count"
-                          round
-                          sx={{
-                            width: '14px',
-                            fontSize: '9px',
-                            lineHeight: '15px',
-                            textAlign: 'center',
-                            display: 'inline-block',
-                          }}
-                          colorPalette={['purpleMedium', 'white']}
-                          text={`${activeFilters.timeInRange?.length}`}
-                        />
-                      )}
-                      </Flex>
-                  </Button>
+                    <Button
+                      variant="filter"
+                      id="clinic-sites-filter-trigger"
+                      selected={activeFilters.clinicSites?.length > 0}
+                      {...bindTrigger(clinicSitesPopupFilterState)}
+                      icon={KeyboardArrowDownRoundedIcon}
+                      iconLabel="Filter by clinic sites"
+                      sx={{ fontSize: 0, lineHeight: 1.3 }}
+                    >
+                      <Flex sx={{ alignItems: 'center', gap: 1 }}>
+                        {t('Sites')}
 
+                        {!!activeFilters.clinicSites?.length && (
+                          <Pill
+                            id="clinic-sites-filter-count"
+                            label="clinic site count"
+                            round
+                            sx={{
+                              width: '14px',
+                              fontSize: '9px',
+                              lineHeight: '15px',
+                              textAlign: 'center',
+                              display: 'inline-block',
+                            }}
+                            colorPalette={['purpleMedium', 'white']}
+                            text={`${activeFilters.clinicSites?.length}`}
+                          />
+                        )}
+                      </Flex>
+                    </Button>
+                  </Box>
+
+                  {/* Clinic Sites Filter */}
+                  <Popover
+                    minWidth="11em"
+                    closeIcon
+                    {...bindPopover(clinicSitesPopupFilterState)}
+                    onClickCloseIcon={() => {
+                      trackMetric(prefixPopHealthMetric('Clinic sites filter close'), { clinicId: selectedClinicId });
+                    }}
+                    onClose={() => {
+                      clinicSitesPopupFilterState.close();
+                      setPendingFilters(activeFilters);
+                    }}
+                  >
+                    <DialogContent px={2} pt={1} pb={3} mt={3} sx={{ maxHeight: '400px', maxWidth: '240px' }} dividers>
+                      <Box variant="containers.small">
+                        <Box mb={2}>
+                          <Text sx={{ display: 'block', position: 'relative', top: -2, color: colors.gray50, fontSize: 1, fontWeight: 'medium' }}>
+                            {t('Sites')}
+                          </Text>
+                          { sortedSiteFilterOptions.length > 0 &&
+                            <Text sx={{ display: 'block', position: 'relative', top: -2, color: colors.gray50, fontSize: 0, fontStyle: 'italic', maxWidth: '208px', whiteSpace: 'wrap', lineHeight: 1 }}>
+                              {t('Any patient with one or more of the sites you select below will be shown.')}
+                            </Text>
+                          }
+                        </Box>
+
+                        { // Render a list of checkboxes
+                          sortedSiteFilterOptions.map(({ id, label }) => {
+                            const { clinicSites } = pendingFilters;
+                            const isChecked = clinicSites?.includes(id);
+
+                            return (
+                              <Box mt={1} className="clinic-site-filter-option" key={`clinic-site-filter-option-${id}`}>
+                                <Checkbox
+                                  id={`clinic-site-filter-option-checkbox-${id}`}
+                                  data-testid={`clinic-site-filter-option-checkbox-${id}`}
+                                  label={
+                                    <Text sx={{ fontSize: 0, fontWeight: 'normal', display: 'inline-block', maxWidth: '160px', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                                      {label}
+                                    </Text>
+                                  }
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isFilteringForZeroSites) {
+                                      setPendingFilters({ ...pendingFilters, clinicSites: [id] });
+                                    } else if (isChecked) {
+                                      setPendingFilters({ ...pendingFilters, clinicSites: without(clinicSites, id) });
+                                    } else {
+                                      setPendingFilters({ ...pendingFilters, clinicSites: [...clinicSites, id] });
+                                    }
+                                  }}
+                                />
+                              </Box>
+                            );
+                          })
+                        }
+
+                        { // Display an option to filter for patients with zero sites
+                          sortedSiteFilterOptions.length > 0 &&
+                          <Box mt={2} mx={-2} pt={3} px={2} sx={{ borderTop: borders.divider }} className="clinic-site-filter-option" key="clinic-site-filter-option-PWDS_WITH_ZERO_SITES">
+                            <Checkbox
+                              id="clinic-site-filter-option-checkbox-PWDS_WITH_ZERO_SITES"
+                              data-testid="clinic-site-filter-option-checkbox-PWDS_WITH_ZERO_SITES"
+                              label={<Text sx={{ fontSize: 0, fontWeight: 'normal' }}>
+                                {t('Patients without any sites')}
+                              </Text>}
+                              checked={isFilteringForZeroSites}
+                              onChange={() => {
+                                if (isFilteringForZeroSites) {
+                                  setPendingFilters({ ...pendingFilters, clinicSites: [] });
+                                } else {
+                                  setPendingFilters({ ...pendingFilters, clinicSites: SPECIAL_FILTER_STATES.ZERO_SITES });
+                                }
+                              }}
+                            />
+                          </Box>
+                        }
+
+                        { // If no sites exist, display a message
+                          sortedSiteFilterOptions.length <= 0 &&
+                          <Box>
+                            <Box sx={{ fontSize: 1, color: colors.gray50, lineHeight: 1 }}>
+                              {t('Create and assign sites to patient accounts to segment your patient population by location.')}
+                            </Box>
+                            { !isClinicAdmin &&
+                              <Box mt={3} pt={3} sx={{ borderTop: `1px solid ${colors.gray05}`, fontSize: 0, color: colors.gray50, lineHeight: 1 }}>
+                                <Trans t={t}>
+                                  Sites can only be created by your Workspace Admins. Not sure who the admins are? Check the Clinic Members list in your&nbsp;
+                                  <RouterLink to='/clinic-admin' style={{ color: colors.purpleBright }}>Workspace Settings.</RouterLink>
+                                </Trans>
+                              </Box>
+                            }
+                          </Box>
+                        }
+                      </Box>
+                    </DialogContent>
+
+                    { sortedSiteFilterOptions.length > 0 &&
+                      <DialogActions sx={{ justifyContent: 'space-around', padding: 2 }} p={1}>
+                        <Button
+                          id="clear-clinic-sites-filter"
+                          sx={{ fontSize: 1 }}
+                          variant="textSecondary"
+                          onClick={() => {
+                            trackMetric(prefixPopHealthMetric('Clinic site filter clear'), { clinicId: selectedClinicId });
+                            setPendingFilters({ ...activeFilters, clinicSites: defaultFilterState.clinicSites });
+                            setActiveFilters({ ...activeFilters, clinicSites: defaultFilterState.clinicSites });
+                            clinicSitesPopupFilterState.close();
+                          }}
+                        >
+                          {t('Clear')}
+                        </Button>
+
+                        <Button id="apply-clinic-sites-filter" sx={{ fontSize: 1 }} variant="textPrimary" onClick={() => {
+                          trackMetric(prefixPopHealthMetric('Clinic sites filter apply'), { clinicId: selectedClinicId });
+                          setActiveFilters(pendingFilters);
+                          clinicSitesPopupFilterState.close();
+                        }}>
+                          {t('Apply')}
+                        </Button>
+                      </DialogActions>
+                    }
+
+                    {isClinicAdmin &&
+                      <DialogActions p={1} sx={{ borderTop: borders.divider }} py={2} px={0}>
+                        <Button
+                          id="show-edit-clinic-sites-dialog"
+                          icon={EditIcon}
+                          iconPosition="left"
+                          iconLabel="Edit Sites"
+                          sx={{ fontSize: 1 }}
+                          variant="textPrimary"
+                          onClick={() => {
+                            trackMetric(prefixPopHealthMetric('Edit clinic sites open'), { clinicId: selectedClinicId, source: 'Filter menu' });
+                            setShowClinicSitesDialog(true);
+                          }}
+                        >
+                          {t('Edit Sites')}
+                        </Button>
+
+                      </DialogActions>
+                    }
+                  </Popover>
+
+                  {/* Tags Filter */}
                   <Box
                     onClick={() => {
                       if (!patientTagsPopupFilterState.isOpen) trackMetric(prefixPopHealthMetric('patient tags filter open'), { clinicId: selectedClinicId });
@@ -1544,7 +2050,7 @@ export const ClinicPatients = (props) => {
                           sx={{ fontSize: '14px' }}
                         />}
 
-                        {t('Patient Tags')}
+                        {t('Tags')}
 
                         {!!activeFilters.patientTags?.length && (
                           <Pill
@@ -1578,111 +2084,162 @@ export const ClinicPatients = (props) => {
                       setPendingFilters(activeFilters);
                     }}
                   >
-                    <DialogContent px={2} pt={1} pb={3} dividers>
+                    <DialogContent px={2} pt={1} pb={3} mt={3} sx={{ maxHeight: '400px', maxWidth: '240px' }} dividers>
                       <Box variant="containers.small">
-                        <Box>
-                          <Text sx={{ color: 'text.primary', fontSize: 1, fontWeight: 'medium', whiteSpace: 'nowrap' }}>
-                            {t('Filter by Patient Tags')}
+                        <Box mb={2}>
+                          <Text sx={{ display: 'block', position: 'relative', top: -2, color: colors.gray50, fontSize: 1, fontWeight: 'medium' }}>
+                            {t('Tags')}
                           </Text>
-
-                          {showTideDashboard && !clinic?.patientTags?.length && (
-                            <Flex mt={3} sx={{ gap: 1, alignItems: 'flex-start' }}>
-                              <Icon
-                                variant="static"
-                                icon={InfoOutlinedIcon}
-                                sx={{ color: 'text.primary', fontSize: '14px' }}
-                              />
-
-                              <Text sx={{ color: 'text.primary', fontSize: 0, fontWeight: 'medium', lineHeight: 2 }}>
-                                {t('To use the TIDE Dashboard, add and apply patient tags.')}
-                              </Text>
-                            </Flex>
-                          )}
+                          { sortedTagFilterOptions.length > 0 &&
+                            <Text sx={{ display: 'block', position: 'relative', top: -2, color: colors.gray50, fontSize: 0, fontStyle: 'italic', maxWidth: '208px', whiteSpace: 'wrap', lineHeight: 1 }}>
+                              {t('Only patients with ALL of the tags you select below will be shown.')}
+                            </Text>
+                          }
                         </Box>
 
-                        {!!pendingFilters.patientTags?.length && (
-                          <Box id="selected-tag-filters" mb={1} sx={{ fontSize: 0, fontWeight: 'medium' }}>
-                            <Text sx={{ fontSize: '10px', color: 'grays.4' }}>{t('Selected Tags')}</Text>
+                        { // Render a list of checkboxes
+                          sortedTagFilterOptions.map(({ id, label }) => {
+                            const { patientTags } = pendingFilters;
+                            const isChecked = patientTags?.includes(id);
 
-                            <TagList
-                              tags={map(pendingFilters.patientTags, tagId => patientTags?.[tagId])}
-                              tagProps={{
-                                onClickIcon: tagId => {
-                                  setPendingFilters({ ...pendingFilters, patientTags: without(pendingFilters.patientTags, tagId) });
-                                },
-                                icon: CloseRoundedIcon,
-                                iconColor: 'white',
-                                iconFontSize: 1,
-                                sx: {
-                                  color: 'white',
-                                  backgroundColor: 'purpleMedium',
-                                },
+                            return (
+                              <Box mt={1} className="tag-filter-option" key={`tag-filter-option-${id}`}>
+                                <Checkbox
+                                  id={`tag-filter-option-checkbox-${id}`}
+                                  data-testid={`tag-filter-option-checkbox-${id}`}
+                                  label={<Text sx={{ fontSize: 0, fontWeight: 'normal' }}>{label}</Text>}
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    if (isFilteringForZeroTags) {
+                                      setPendingFilters({ ...pendingFilters, patientTags: [id] });
+                                    } else if (isChecked) {
+                                      setPendingFilters({ ...pendingFilters, patientTags: without(patientTags, id) });
+                                    } else {
+                                      setPendingFilters({ ...pendingFilters, patientTags: [...patientTags, id] });
+                                    }
+                                  }}
+                                />
+                              </Box>
+                            );
+                          })
+                        }
+
+                        { // Display an option to filter for patients with zero tags
+                          sortedSiteFilterOptions.length > 0 &&
+                          <Box mt={2} mx={-2} pt={3} px={2} sx={{ borderTop: borders.divider }} className="clinic-site-filter-option" key="clinic-site-filter-option-PWDS_WITH_ZERO_TAGS">
+                            <Checkbox
+                              id="tag-filter-option-checkbox-PWDS_WITH_ZERO_TAGS"
+                              data-testid="tag-filter-option-checkbox-PWDS_WITH_ZERO_TAGS"
+                              label={<Text sx={{ fontSize: 0, fontWeight: 'normal' }}>
+                                {t('Patients without any tags')}
+                              </Text>}
+                              checked={isFilteringForZeroTags}
+                              onChange={() => {
+                                if (isFilteringForZeroTags) {
+                                  setPendingFilters({ ...pendingFilters, patientTags: [] });
+                                } else {
+                                  setPendingFilters({ ...pendingFilters, patientTags: SPECIAL_FILTER_STATES.ZERO_TAGS });
+                                }
                               }}
                             />
                           </Box>
-                        )}
+                        }
 
-                        {pendingFilters.patientTags?.length < patientTagsFilterOptions?.length && (
-                          <Box id="available-tag-filters" sx={{ alignItems: 'center', fontSize:0, fontWeight:'medium' }} mt={2} mb={1}>
-                            {!!pendingFilters.patientTags?.length && <Text sx={{ fontSize: '10px', color: 'grays.4' }}>{t('Available Tags')}</Text>}
-
-                            <TagList
-                              tags={map(reject(patientTagsFilterOptions, ({ id }) => includes(pendingFilters.patientTags, id)), ({ id }) => patientTags?.[id])}
-                              tagProps={{
-                                onClick: tagId => {
-                                  setPendingFilters({ ...pendingFilters, patientTags: [...pendingFilters.patientTags, tagId] });
-                                },
-                              }}
-                            />
+                        { // If no tags exist, display a message
+                          sortedTagFilterOptions.length <= 0 &&
+                          <Box>
+                            <Box sx={{ fontSize: 1, color: colors.gray50, lineHeight: 1 }}>
+                              {t('Tags help you segment your patient population based on criteria you define, such as clinician, type of diabetes, or care groups.')}
+                            </Box>
+                            { !isClinicAdmin &&
+                              <Box mt={3} pt={3} sx={{ borderTop: `1px solid ${colors.gray05}`, fontSize: 0, color: colors.gray50, lineHeight: 1 }}>
+                                <Trans t={t}>
+                                  Tags can only be created by your Workspace Admins. Not sure who the admins are? Check the Clinic Members list in your&nbsp;
+                                  <RouterLink to='/clinic-admin' style={{ color: colors.purpleBright }}>Workspace Settings.</RouterLink>
+                                </Trans>
+                              </Box>
+                            }
                           </Box>
-                        )}
+                        }
                       </Box>
                     </DialogContent>
 
-                    <DialogActions sx={{ justifyContent: 'space-between' }} p={1}>
-                      <Button
-                        id="clear-patient-tags-filter"
-                        sx={{ fontSize: 1 }}
-                        variant="textSecondary"
-                        onClick={() => {
-                          trackMetric(prefixPopHealthMetric('Patient tag filter clear'), { clinicId: selectedClinicId });
-                          setPendingFilters({ ...activeFilters, patientTags: defaultFilterState.patientTags });
-                          setActiveFilters({ ...activeFilters, patientTags: defaultFilterState.patientTags });
+                    { sortedTagFilterOptions.length > 0 &&
+                      <DialogActions sx={{ justifyContent: 'space-around', padding: 2 }} p={1}>
+                        <Button
+                          id="clear-patient-tags-filter"
+                          sx={{ fontSize: 1 }}
+                          variant="textSecondary"
+                          onClick={() => {
+                            trackMetric(prefixPopHealthMetric('Patient tag filter clear'), { clinicId: selectedClinicId });
+                            setPendingFilters({ ...activeFilters, patientTags: defaultFilterState.patientTags });
+                            setActiveFilters({ ...activeFilters, patientTags: defaultFilterState.patientTags });
+                            patientTagsPopupFilterState.close();
+                          }}
+                        >
+                          {t('Clear')}
+                        </Button>
+
+                        <Button id="apply-patient-tags-filter" sx={{ fontSize: 1 }} variant="textPrimary" onClick={() => {
+                          trackMetric(prefixPopHealthMetric('Patient tag filter apply'), { clinicId: selectedClinicId });
+                          setActiveFilters(pendingFilters);
                           patientTagsPopupFilterState.close();
-                        }}
-                      >
-                        {t('Clear')}
-                      </Button>
+                        }}>
+                          {t('Apply')}
+                        </Button>
+                      </DialogActions>
+                    }
 
-                      <Button id="apply-patient-tags-filter" disabled={!pendingFilters.patientTags?.length} sx={{ fontSize: 1 }} variant="textPrimary" onClick={() => {
-                        trackMetric(prefixPopHealthMetric('Patient tag filter apply'), { clinicId: selectedClinicId });
-                        setActiveFilters(pendingFilters);
-                        patientTagsPopupFilterState.close();
-                      }}>
-                        {t('Apply')}
-                      </Button>
-                    </DialogActions>
+                    {isClinicAdmin &&
+                      <DialogActions p={1} sx={{ borderTop: borders.divider }} py={2} px={0}>
+                        <Button
+                          id="show-edit-clinic-patient-tags-dialog"
+                          icon={EditIcon}
+                          iconPosition="left"
+                          iconLabel="Edit patient tags"
+                          sx={{ fontSize: 1 }}
+                          variant="textPrimary"
+                          onClick={() => {
+                            trackMetric(prefixPopHealthMetric('Edit clinic tags open'), { clinicId: selectedClinicId, source: 'Filter menu' });
+                            setShowClinicPatientTagsDialog(true);
+                          }}
+                        >
+                          {t('Edit Tags')}
+                        </Button>
 
-                    <DialogActions
-                      p={1}
-                      sx={{ borderTop: borders.divider, justifyContent: 'space-between' }}
-                    >
-                      <Button
-                        id="show-edit-clinic-patient-tags-dialog"
-                        icon={EditIcon}
-                        iconPosition="left"
-                        sx={{ fontSize: 1 }}
-                        variant="textPrimary"
-                        onClick={() => {
-                          trackMetric(prefixPopHealthMetric('Edit clinic tags open'), { clinicId: selectedClinicId, source: 'Filter menu' });
-                          setShowClinicPatientTagsDialog(true);
-                        }}
-                      >
-                        {t('Edit Available Patient Tags')}
-                      </Button>
-
-                    </DialogActions>
+                      </DialogActions>
+                    }
                   </Popover>
+
+                  <Button
+                    id="time-in-range-filter-trigger"
+                    variant="filter"
+                    selected={!!activeFilters.timeInRange?.length}
+                    onClick={handleOpenTimeInRangeFilter}
+                    icon={KeyboardArrowDownRoundedIcon}
+                    iconLabel="Filter by Time In Range"
+                    sx={{ fontSize: 0, lineHeight: 1.3, flexShrink: 0 }}
+                  >
+                    <Flex sx={{ gap: 1 }}>
+                      {t('% Time in Range')}
+                      {!!activeFilters.timeInRange?.length && (
+                        <Pill
+                          id="time-in-range-filter-count"
+                          label="filter count"
+                          round
+                          sx={{
+                            width: '14px',
+                            fontSize: '9px',
+                            lineHeight: '15px',
+                            textAlign: 'center',
+                            display: 'inline-block',
+                          }}
+                          colorPalette={['purpleMedium', 'white']}
+                          text={`${activeFilters.timeInRange?.length}`}
+                        />
+                      )}
+                      </Flex>
+                  </Button>
 
                   <Box
                     onClick={() => {
@@ -1908,7 +2465,7 @@ export const ClinicPatients = (props) => {
 
             {/* Info/Visibility Icons */}
             <Flex sx={{ gap: 2, justifyContent: 'flex-end', flexGrow: 1, flexShrink: 0, alignItems: 'center' }}>
-              {showSummaryData && showNames && (
+              {showSummaryData && isPatientListVisible && (
                 <>
                   <PopoverLabel
                     id="patient-fetch-time-ago"
@@ -2009,6 +2566,74 @@ export const ClinicPatients = (props) => {
     );
   }, [handleRemovePatient, selectedPatient?.fullName, showDeleteDialog, t]);
 
+  const renderUpdateClinicSiteDialog = useCallback(() => {
+    const name = selectedClinicSite?.name || '';
+    const id = selectedClinicSite?.id;
+
+    return (
+      <Dialog
+        id="updateClinicSite"
+        aria-labelledby="dialog-title"
+        open={showUpdateClinicSiteDialog}
+        onClose={handleCloseClinicSiteUpdateDialog}
+      >
+        <DialogTitle onClose={handleCloseClinicSiteUpdateDialog}>
+          <MediumTitle id="dialog-title">{t('Update "{{name}}"', { name })}</MediumTitle>
+        </DialogTitle>
+
+        <Formik
+          initialValues={{ name }}
+          onSubmit={(site, context) => {
+            setClinicSiteFormContext(context);
+            handleUpdateClinicSiteConfirm({ ...site, id });
+          }}
+          validationSchema={clinicSiteSchema}
+        >
+          {clinicSiteFormikContext => (
+            <Form id="clinic-site-update">
+              <DialogContent sx={{ minWidth: '512px' }}>
+                <Flex mb={3} sx={{ gap: 2 }}>
+                  <TextInput
+                    themeProps={{
+                      width: '100%',
+                      sx: { width: '100%' },
+                      flex: 1,
+                      fontSize: '12px',
+                    }}
+                    maxLength={200}
+                    placeholder={t('Add a new site...')}
+                    captionProps={{ mt: 0, fontSize: '10px', color: colors.grays[4] }}
+                    variant="condensed"
+                    {...getCommonFormikFieldProps('name', clinicSiteFormikContext)}
+                  />
+                </Flex>
+
+                <Body1>
+                  {t('This site will also be updated for any patients associated with it.')}
+                </Body1>
+              </DialogContent>
+
+              <DialogActions>
+                <Button id="clinicSiteUpdateCancel" variant="secondary" onClick={handleCloseClinicSiteUpdateDialog.bind(null, 'Edit clinic sites cancel update site')}>
+                  {t('Cancel')}
+                </Button>
+
+                <Button
+                  id="clinic-site-update-confirm"
+                  disabled={!clinicSiteFormikContext.values.name.trim().length || !clinicSiteFormikContext.isValid}
+                  type="submit"
+                  variant="primary"
+                >
+                  {t('Update')}
+                </Button>
+              </DialogActions>
+            </Form>
+          )}
+        </Formik>
+      </Dialog>
+    );
+  }, [handleUpdateClinicSiteConfirm, handleCloseClinicSiteUpdateDialog, selectedClinicSite?.name, showUpdateClinicSiteDialog, t]);
+
   const renderUpdateClinicPatientTagDialog = useCallback(() => {
     const name = selectedPatientTag?.name || '';
 
@@ -2033,18 +2658,17 @@ export const ClinicPatients = (props) => {
         >
           {patientTagFormikContext => (
             <Form id="patient-tag-update">
-              <DialogContent>
+              <DialogContent sx={{ minWidth: '512px' }}>
                 <Flex mb={3} sx={{ gap: 2 }}>
                   <TextInput
                     themeProps={{
                       width: '100%',
-                      sx: { input: { height: '22px', py: '0 !important' } },
+                      sx: { width: '100%' },
                       flex: 1,
                       fontSize: '12px',
                     }}
                     maxLength={20}
                     placeholder={t('Add a new tag...')}
-                    description={t('You can add up to {{maxClinicPatientTags}} tags per clinic', { maxClinicPatientTags })}
                     captionProps={{ mt: 0, fontSize: '10px', color: colors.grays[4] }}
                     variant="condensed"
                     {...getCommonFormikFieldProps('name', patientTagFormikContext)}
@@ -2052,7 +2676,7 @@ export const ClinicPatients = (props) => {
                 </Flex>
 
                 <Body1>
-                  This tag will also be updated for any patients who have been tagged with it.
+                  {t('The tag\'s name will be updated for any patients associated with it.')}
                 </Body1>
               </DialogContent>
 
@@ -2077,6 +2701,48 @@ export const ClinicPatients = (props) => {
     );
   }, [handleUpdateClinicPatientTagConfirm, handleCloseClinicPatientTagUpdateDialog, selectedPatientTag?.name, showUpdateClinicPatientTagDialog, t]);
 
+  const renderDeleteClinicSiteDialog = useCallback(() => {
+    const name = selectedClinicSite?.name;
+
+    return (
+      <Dialog
+        id="deleteSite"
+        aria-labelledby="dialog-title"
+        open={showDeleteClinicSiteDialog}
+        onClose={handleCloseClinicSiteUpdateDialog}
+      >
+        <DialogTitle onClose={handleCloseClinicSiteUpdateDialog}>
+          <MediumTitle id="dialog-title">{t('Remove "{{name}}"', { name })}</MediumTitle>
+        </DialogTitle>
+
+        <DialogContent>
+          <Flex variant="banners.danger" py={3} sx={{ justifyContent: 'flex-start', gap: 2, borderRadius: '4px' }}>
+            <Icon className="icon" theme={baseTheme} variant="static" icon={ErrorRoundedIcon} label='danger' />
+            <Body1>
+              <Text sx={{ fontWeight: 'medium' }}>
+                {t('Are you sure you want to remove the site: "{{name}}" from the workspace?', { name })}
+              </Text>
+            </Body1>
+          </Flex>
+        </DialogContent>
+
+        <DialogActions>
+          <Button id="clinicSiteRemoveCancel" variant="secondary" onClick={handleCloseClinicSiteUpdateDialog.bind(null, 'Edit clinic sites cancel delete site')}>
+            {t('Cancel')}
+          </Button>
+
+          <Button
+            id="clinicSiteRemoveConfirm"
+            variant="danger"
+            onClick={handleDeleteClinicSiteConfirm}
+          >
+            {t('Remove')}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    );
+  }, [handleDeleteClinicSiteConfirm, handleCloseClinicSiteUpdateDialog, selectedClinicSite?.name, showDeleteClinicSiteDialog, t]);
+
   const renderDeleteClinicPatientTagDialog = useCallback(() => {
     const name = selectedPatientTag?.name;
 
@@ -2092,15 +2758,14 @@ export const ClinicPatients = (props) => {
         </DialogTitle>
 
         <DialogContent>
-          <Trans className="ModalOverlay-content" i18nKey="html.peopletable-remove-patient-tag-confirm">
+          <Flex variant="banners.danger" py={3} sx={{ justifyContent: 'flex-start', gap: 2, borderRadius: '4px' }}>
+            <Icon className="icon" theme={baseTheme} variant="static" icon={ErrorRoundedIcon} label='danger' />
             <Body1>
-              Are you sure you want to remove the tag: <strong>{{name}}</strong> from the clinic?
+              <Text sx={{ fontWeight: 'medium' }}>
+                {t('Are you sure you want to remove the tag: "{{name}}" from the workspace?', { name })}
+              </Text>
             </Body1>
-
-            <Body1>
-              This tag will also be removed from any patients who have been tagged with it.
-            </Body1>
-          </Trans>
+          </Flex>
         </DialogContent>
 
         <DialogActions>
@@ -2192,17 +2857,27 @@ export const ClinicPatients = (props) => {
 
         <DialogActions>
           <Button id="editPatientCancel" variant="secondary" onClick={() => {
-            trackMetric('Clinic - Edit patient cancel', { clinicId: selectedClinicId });
+            trackMetric('Clinic - Edit patient cancel', { clinicId: selectedClinicId, source: 'Patients list' });
             handleCloseOverlays()
           }}>
             {t('Cancel')}
           </Button>
 
           <Button
+            id="editPatientNext"
+            variant="secondary"
+            onClick={handleEditPatientAndAddDataSourcesConfirm}
+            processing={updatingClinicPatient.inProgress && patientFormContext?.status?.showDataConnectionsModalNext}
+            disabled={!fieldsAreValid(keys(patientFormContext?.values), validationSchema({mrnSettings, existingMRNs}), patientFormContext?.values)}
+          >
+            {t('Save & Next')}
+          </Button>
+
+          <Button
             id="editPatientConfirm"
             variant="primary"
             onClick={handleEditPatientConfirm}
-            processing={updatingClinicPatient.inProgress}
+            processing={updatingClinicPatient.inProgress && !patientFormContext?.status?.showDataConnectionsModalNext}
             disabled={!fieldsAreValid(keys(patientFormContext?.values), validationSchema({mrnSettings, existingMRNs}), patientFormContext?.values)}
           >
             {t('Save Changes')}
@@ -2213,9 +2888,12 @@ export const ClinicPatients = (props) => {
   }, [
     api,
     handleEditPatientConfirm,
+    handleEditPatientAndAddDataSourcesConfirm,
     mrnSettings,
     existingMRNs,
-    patientFormContext?.values,
+    handleCloseOverlays,
+    patientFormContext,
+    searchDebounceMs,
     selectedClinicId,
     selectedPatient,
     showEditPatientDialog,
@@ -2267,7 +2945,176 @@ export const ClinicPatients = (props) => {
     trackMetric
   ]);
 
+  const renderClinicSitesDialog = useCallback(() => {
+    const orderedSites = clinic?.sites?.toSorted((a, b) => utils.compareLabels(a.name, b.name)) || [];
+
+    return (
+      <Dialog
+        id="editClinicSitesDialog"
+        aria-labelledby="dialog-title"
+        open={showClinicSitesDialog}
+        onClose={() => {
+          handleCloseOverlays();
+        }}
+      >
+        <Box variant="containers.small" mb={0} sx={{ width: ['100%', '100%'] }}>
+          <DialogTitle
+            divider
+            onClose={() => {
+              trackMetric(prefixPopHealthMetric('Edit clinic sites dialog close'), { clinicId: selectedClinicId });
+              handleCloseOverlays();
+            }}
+          >
+            <Body1 sx={{ fontWeight: 'medium', fontSize: 3 }}>{t('Edit Sites')}</Body1>
+          </DialogTitle>
+
+          <DialogContent pt={0} divider={false} sx={{ minWidth: '512px', maxHeight: '70vh' }}>
+            <Formik
+              initialValues={{ name: '' }}
+              onSubmit={(clinicSite, context) => {
+                trackMetric(prefixPopHealthMetric('Edit clinic sites add'), { clinicId: selectedClinicId });
+                setClinicSiteFormContext(context);
+                handleCreateClinicSite(clinicSite);
+              }}
+              validationSchema={clinicSiteSchema}
+            >
+              {clinicSitesFormikContext => (
+                <Form id="patient-site-add">
+                  <Box mt={3}>
+                    <Text sx={{ fontSize: 1, color: 'text.primary', fontWeight: 'medium' }}>
+                      {t('Add a Site')}{' - '}
+                    </Text>
+                    <Text sx={{ fontSize: 0, color: 'text.primary' }}>
+                      {t('You may add up to {{ maxWorkspaceClinicSites }} sites', { maxWorkspaceClinicSites })}
+                    </Text>
+                  </Box>
+                  <Flex mb={3} mt={1} sx={{ gap: 2, position: 'relative' }}>
+                    <TextInput
+                      themeProps={{
+                        width: '100%',
+                        sx: {
+                          width: '100%',
+                          input: {
+                            height: '38px',
+                            py: '0 !important',
+                            paddingRight: '90px', // creates visual space for the Add Button
+                          },
+                        },
+                        flex: 1,
+                        fontSize: '12px',
+                      }}
+                      disabled={clinic?.sites?.length >= maxWorkspaceClinicSites}
+                      maxLength={200}
+                      placeholder={t('Add a Site')}
+                      captionProps={{ mt: 0, fontSize: '10px', color: colors.grays[4] }}
+                      variant="condensed"
+                      {...getCommonFormikFieldProps('name', clinicSitesFormikContext)}
+                    />
+
+                    <Button
+                      disabled={!clinicSitesFormikContext.values.name.trim().length || clinic?.sites?.length >= maxWorkspaceClinicSites || !clinicSitesFormikContext.isValid}
+                      type="submit"
+                      sx={{
+                        height: '32px',
+                        position: 'absolute',
+                        top: 1,
+                        right: 1,
+                      }}
+                    >
+                      {t('Add')}
+                    </Button>
+                  </Flex>
+                </Form>
+              )}
+            </Formik>
+
+            { clinicSitesFilterOptions.length > 0 &&
+              <>
+                <Box>
+                  <Text sx={{ fontSize: 1, color: 'text.primary', fontWeight: 'medium' }}>
+                    {t('Sites ({{ count }})', { count: clinic?.sites?.length || '0' })}{' - '}
+                  </Text>
+                  <Text sx={{ fontSize: 0, color: 'text.primary' }}>
+                    {t('Click on the edit icon to rename the site or trash icon to delete it.')}
+                  </Text>
+                </Box>
+                <Box mt={1} mb={0}>
+                  <Text sx={{ fontSize: 0, color: colors.gray50, fontStyle: 'italic' }}>
+                    {t('Name')}
+                  </Text>
+                </Box>
+              </>
+            }
+
+            <Box mt={1} id="clinic-patients-edit-site-list">
+              {
+                orderedSites.map(({ id, name }) => (
+                  <Grid
+                    key={`edit-sites-list-${id}`}
+                    py={2}
+                    sx={{
+                      gridTemplateColumns: '1fr 72px 16px',
+                      borderTop: `1px solid ${colors.gray05}`,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Flex sx={{ alignItems: 'center'}}>
+                      <Text className="clinic-site-text" sx={{ fontSize: 1, color: 'text.primary' }}>{name}</Text>
+                      <Icon
+                        id={`edit-site-button-${id}`}
+                        data-testid={`edit-site-button-${id}`}
+                        icon={EditIcon}
+                        sx={{ fontSize: 1, marginLeft: 2 }}
+                        onClick={isClinicAdmin ? () => handleUpdateClinicSite(id) : noop}
+                      />
+                    </Flex>
+                    <Box>
+
+                    </Box>
+                    <Flex sx={{ justifyContent: 'flex-end' }}>
+                      <Icon
+                        id={`delete-site-button-${id}`}
+                        data-testid={`delete-site-button-${id}`}
+                        icon={DeleteIcon}
+                        sx={{ fontSize: 1 }}
+                        onClick={isClinicAdmin ? () => handleDeleteClinicSite(id) : noop}
+                      />
+                    </Flex>
+                  </Grid>
+                ))
+              }
+            </Box>
+          </DialogContent>
+
+          <DialogActions sx={{ borderTop: borders.divider, display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              id="edit-sites-dialog-done"
+              variant="secondary"
+              sx={{ minWidth: '120px'}}
+              onClick={handleCloseOverlays}
+            >
+              {t('Done')}
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
+    );
+  }, [
+    clinic?.sites,
+    handleCreateClinicSite,
+    handleUpdateClinicSite,
+    handleDeleteClinicSite,
+    isClinicAdmin,
+    prefixPopHealthMetric,
+    selectedClinicId,
+    showClinicSitesDialog,
+    trackMetric,
+    t,
+  ]);
+
   const renderClinicPatientTagsDialog = useCallback(() => {
+    const orderedTags = clinic?.patientTags?.toSorted((a, b) => utils.compareLabels(a.name, b.name)) || [];
+
     return (
       <Dialog
         id="editClinicPatientTags"
@@ -2277,18 +3124,18 @@ export const ClinicPatients = (props) => {
           handleCloseOverlays();
         }}
       >
-        <Box variant="containers.extraSmall" mb={0} sx={{ width: ['100%', '100%'] }}>
+        <Box variant="containers.small" mb={0} sx={{ width: ['100%', '100%'] }}>
           <DialogTitle
-            divider={false}
+            divider
             onClose={() => {
               trackMetric(prefixPopHealthMetric('Edit clinic tags close'), { clinicId: selectedClinicId });
               handleCloseOverlays();
             }}
           >
-            <Body1 sx={{ fontWeight: 'medium' }}>{t('Available Patient Tags')}</Body1>
+            <Body1 sx={{ fontWeight: 'medium', fontSize: 3 }}>{t('Edit Tags')}</Body1>
           </DialogTitle>
 
-          <DialogContent pt={0} divider={false}>
+          <DialogContent pt={0} divider={false} sx={{ minWidth: '512px', maxHeight: '70vh' }}>
             <Formik
               initialValues={{ name: '' }}
               onSubmit={(tag, context) => {
@@ -2300,18 +3147,25 @@ export const ClinicPatients = (props) => {
             >
               {patientTagFormikContext => (
                 <Form id="patient-tag-add">
-                  <Flex mb={3} sx={{ gap: 2 }}>
+                  <Box mt={3}>
+                    <Text sx={{ fontSize: 1, color: 'text.primary', fontWeight: 'medium' }}>
+                      {t('Add a Tag')}{' - '}
+                    </Text>
+                    <Text sx={{ fontSize: 0, color: 'text.primary' }}>
+                      {t('You may add up to {{ maxClinicPatientTags }} tags', { maxClinicPatientTags })}
+                    </Text>
+                  </Box>
+                  <Flex mb={3} mt={1} sx={{ gap: 2, position: 'relative' }}>
                     <TextInput
                       themeProps={{
                         width: '100%',
-                        sx: { input: { height: '22px', py: '0 !important' } },
+                        sx: { width: '100%', input: { height: '38px', py: '0 !important' } },
                         flex: 1,
                         fontSize: '12px',
                       }}
                       disabled={clinic?.patientTags?.length >= maxClinicPatientTags}
                       maxLength={20}
-                      placeholder={t('Add a new tag...')}
-                      description={t('You can add up to {{maxClinicPatientTags}} tags per clinic', { maxClinicPatientTags })}
+                      placeholder={t('Add a Tag')}
                       captionProps={{ mt: 0, fontSize: '10px', color: colors.grays[4] }}
                       variant="condensed"
                       {...getCommonFormikFieldProps('name', patientTagFormikContext)}
@@ -2320,7 +3174,12 @@ export const ClinicPatients = (props) => {
                     <Button
                       disabled={!patientTagFormikContext.values.name.trim().length || clinic?.patientTags?.length >= maxClinicPatientTags || !patientTagFormikContext.isValid}
                       type="submit"
-                      sx={{ height: '24px', alignSelf: 'flex-start' }}
+                      sx={{
+                        height: '32px',
+                        position: 'absolute',
+                        top: 1,
+                        right: 1,
+                      }}
                     >
                       {t('Add')}
                     </Button>
@@ -2329,22 +3188,73 @@ export const ClinicPatients = (props) => {
               )}
             </Formik>
 
-            <Text mb={2} sx={{ color: 'text.primary', fontWeight: 'medium', fontSize: 0 }}>
-              {isClinicAdmin
-                ? t('Click a tag\'s text to rename it, or click the trash can icon to delete it.')
-                : t('Click a tag\'s text to rename it.')
-              }
-            </Text>
+            { patientTagsFilterOptions.length > 0 &&
+              <>
+                <Box>
+                  <Text sx={{ fontSize: 1, color: 'text.primary', fontWeight: 'medium' }}>
+                    {t('Tags ({{ count }})', { count: clinic?.patientTags?.length || '0' })}{' - '}
+                  </Text>
+                  <Text sx={{ fontSize: 0, color: 'text.primary' }}>
+                    {t('Click on the edit icon to rename the tag or trash icon to delete it.')}
+                  </Text>
+                </Box>
+                <Box mt={1} mb={0}>
+                  <Text sx={{ fontSize: 0, color: colors.gray50, fontStyle: 'italic' }}>
+                    {t('Name')}
+                  </Text>
+                </Box>
+              </>
+            }
 
-            <TagList
-              tags={clinic?.patientTags}
-              tagProps={{
-                icon: isClinicAdmin ? DeleteIcon : undefined,
-                onClickIcon: isClinicAdmin ? tagId => handleDeleteClinicPatientTag(tagId) : undefined,
-                onClick: tagId => handleUpdateClinicPatientTag(tagId),
-              }}
-            />
+            <Box mt={1} id="clinic-patients-edit-tag-list">
+              {
+                orderedTags.map(({ id, name }) => (
+                  <Grid
+                    key={`edit-tags-list-${id}`}
+                    py={2}
+                    sx={{
+                      gridTemplateColumns: '1fr 72px 16px',
+                      borderTop: `1px solid ${colors.gray05}`,
+                      alignItems: 'center',
+                    }}>
+                    <Flex sx={{ alignItems: 'center'}}>
+                      <Text className="tag-text" sx={{ fontSize: 1, color: 'text.primary' }}>{name}</Text>
+                      <Icon
+                        id={`edit-tag-button-${id}`}
+                        data-testid={`edit-tag-button-${id}`}
+                        icon={EditIcon}
+                        sx={{ fontSize: 1, marginLeft: 2 }}
+                        onClick={isClinicAdmin ? () => handleUpdateClinicPatientTag(id) : noop}
+                      />
+                    </Flex>
+                    <Box>
+
+                    </Box>
+                    <Flex sx={{ justifyContent: 'flex-end' }}>
+                      <Icon
+                        id={`delete-tag-button-${id}`}
+                        data-testid={`delete-tag-button-${id}`}
+                        icon={DeleteIcon}
+                        sx={{ fontSize: 1 }}
+                        onClick={isClinicAdmin ? () => handleDeleteClinicPatientTag(id) : noop}
+                      />
+                    </Flex>
+                  </Grid>
+                ))
+              }
+            </Box>
           </DialogContent>
+
+          <DialogActions sx={{ borderTop: borders.divider, display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              id="edit-patient-tags-dialog-done"
+              variant="secondary"
+              sx={{ minWidth: '120px'}}
+              onClick={handleCloseOverlays}
+            >
+              {t('Done')}
+            </Button>
+          </DialogActions>
         </Box>
       </Dialog>
     );
@@ -2437,47 +3347,47 @@ export const ClinicPatients = (props) => {
   const renderTimeInRangeDialog = useCallback(() => {
     const timeInRangeFilterOptions = [
       {
-        value: 'timeInVeryLowPercent',
-        threshold: glycemicTargetThresholds.timeInVeryLowPercent.value,
-        prefix: t('Greater than'),
-        tag: t('Severe hypoglycemia'),
-        rangeName: 'veryLow',
-      },
-      {
-        value: 'timeInLowPercent',
-        threshold: glycemicTargetThresholds.timeInLowPercent.value,
-        prefix: t('Greater than'),
-        tag: t('Hypoglycemia'),
-        rangeName: 'low',
-      },
-      {
-        value: 'timeInTargetPercent',
-        threshold: glycemicTargetThresholds.timeInTargetPercent.value,
-        prefix: t('Less than'),
-        tag: t('Normal'),
-        rangeName: 'target',
-      },
-      {
-        value: 'timeInHighPercent',
-        threshold: glycemicTargetThresholds.timeInHighPercent.value,
-        prefix: t('Greater than'),
-        tag: t('Hyperglycemia'),
-        rangeName: 'high',
-      },
-      {
+        title: t('Very High'),
         value: 'timeInVeryHighPercent',
         threshold: glycemicTargetThresholds.timeInVeryHighPercent.value,
         prefix: t('Greater than'),
-        tag: t('Severe hyperglycemia'),
         rangeName: 'veryHigh',
+      },
+      {
+        title: t('High'),
+        value: 'timeInAnyHighPercent',
+        threshold: glycemicTargetThresholds.timeInAnyHighPercent.value,
+        prefix: t('Greater than'),
+        rangeName: 'anyHigh',
+      },
+      {
+        title: t('Not meeting TIR'),
+        value: 'timeInTargetPercent',
+        threshold: glycemicTargetThresholds.timeInTargetPercent.value,
+        prefix: t('Less than'),
+        rangeName: 'target',
+      },
+      {
+        title: t('Low'),
+        value: 'timeInAnyLowPercent',
+        threshold: glycemicTargetThresholds.timeInAnyLowPercent.value,
+        prefix: t('Greater than'),
+        rangeName: 'anyLow',
+      },
+      {
+        title: t('Very Low'),
+        value: 'timeInVeryLowPercent',
+        threshold: glycemicTargetThresholds.timeInVeryLowPercent.value,
+        prefix: t('Greater than'),
+        rangeName: 'veryLow',
       },
     ];
 
-    if (showExtremeHigh) timeInRangeFilterOptions.push({
+    if (showExtremeHigh) timeInRangeFilterOptions.unshift({
+      title: t('Highest'),
       value: 'timeInExtremeHighPercent',
       threshold: glycemicTargetThresholds.timeInExtremeHighPercent.value,
       prefix: t('Greater than'),
-      tag: t('Extreme hyperglycemia'),
       rangeName: 'extremeHigh',
     });
 
@@ -2508,11 +3418,11 @@ export const ClinicPatients = (props) => {
         <DialogContent color="text.primary" pl={4} pr={6} pb={3}>
           <Flex mb={3} sx={{ alignItems: 'center', fontSize: 1, fontWeight: 'medium' }}>
             <Text mr={2} sx={{ whiteSpace: 'nowrap' }}>
-              {t('View Patients that spend:')}
+              {t('Filter by Time in Range')}
             </Text>
           </Flex>
 
-          {map(timeInRangeFilterOptions, ({ value, rangeName, tag, threshold, prefix }) => {
+          {map(timeInRangeFilterOptions, ({ value, title, rangeName, threshold, prefix }) => {
             const {prefix: bgPrefix, suffix, value:glucoseTargetValue} = bgLabels[rangeName];
 
             return (
@@ -2536,26 +3446,66 @@ export const ClinicPatients = (props) => {
                   }}
                 />
 
-              <Box>
+              <Box
+                px={1}
+                py={1}
+                ml={-2}
+                sx={{
+                  backgroundColor: `${colors.bg[rangeName]}1A`, // Adding '1A' reduces opacity to 0.1
+                  borderRadius: 4,
+                }}
+              >
                 <Flex as="label" htmlFor={`range-${value}-filter`} sx={{ alignItems: 'center' }}>
-                  <Text sx={{ fontSize: 1 }} mr={2}>
+                  <Box
+                    id={`range-${value}-filter-option-color-indicator`}
+                    sx={{
+                      position: 'relative',
+                      borderRadius: 4,
+                      backgroundColor: colors.bg[rangeName],
+                      width: '12px',
+                      height: '12px',
+
+                      // The styles within the :after pseudo-class below create a diagonal line
+
+                      border: value === 'timeInTargetPercent' && `1.5px solid ${colors.blueGreyDark}`,
+                      '&::after': value === 'timeInTargetPercent' && {
+                        content: '""',
+                        height: '1.5px',
+                        width: '141.421%',
+                        backgroundColor: colors.blueGreyDark,
+                        position: 'absolute',
+                        bottom: '0px',
+                        transform: 'rotate(-45deg)',
+                        transformOrigin: '1px 1px',
+                      },
+                    }}
+                    mr={2}
+                  >
+                  </Box>
+
+                  <Text
+                    id={`range-${value}-filter-option-title`}
+                    sx={{ fontSize: 1, fontWeight: 'bold', color: 'black' }}
+                    mr={2}
+                  >
+                    {title}
+                  </Text>
+
+                  <Text
+                    id={`range-${value}-filter-option-definition`}
+                    sx={{ fontSize: 1 }} mr={2}
+                  >
                     {prefix}{' '}
                     <Text sx={{ fontSize: 2, fontWeight: 'bold' }}>
                       {threshold}
                     </Text>
-                    % {t('Time')} {t(bgPrefix)}{' '}
+                    % {t('Time')}{' '}
+                    {bgPrefix && `${t(bgPrefix)} `}
                     <Text sx={{ fontSize: 2, fontWeight: 'bold' }}>
                       {glucoseTargetValue}
                     </Text>{' '}
                     {suffix}
                   </Text>
-                  <Pill
-                    label={tag}
-                    py="2px"
-                    sx={{ fontSize: '12px', fontWeight: 'normal', borderRadius: radii.input }}
-                    colorPalette={[`bg.${rangeName}`, 'white']}
-                    text={tag}
-                  />
                 </Flex>
               </Box>
             </Flex>
@@ -2706,36 +3656,39 @@ export const ClinicPatients = (props) => {
       </Dialog>
     );
   }, [
+    handleCloseOverlays,
     showRpmReportLimitDialog,
     t,
   ]);
 
-  function handleCloseOverlays() {
-    const resetList = showAddPatientDialog || showEditPatientDialog;
-    setShowDeleteDialog(false);
-    setShowAddPatientDialog(false);
-    setShowEditPatientDialog(false);
-    setShowClinicPatientTagsDialog(false);
-    setShowTimeInRangeDialog(false);
-    setShowSendUploadReminderDialog(false);
-    setShowTideDashboardConfigDialog(false);
-    setShowRpmReportConfigDialog(false);
-    setShowRpmReportLimitDialog(false);
-
-    if (resetList) {
-      setPatientFetchOptions({ ...patientFetchOptions });
-    }
-
-    setTimeout(() => {
-      setSelectedPatient(null);
-    });
-  }
+  const renderDataConnectionsModal = useCallback(() => {
+    return (
+      <DataConnectionsModal
+        open
+        patient={selectedPatient}
+        onClose={handleCloseOverlays}
+        onBack={patientFormContext?.status?.showDataConnectionsModalNext ? () => {
+          setShowDataConnectionsModal(false)
+          setShowEditPatientDialog(true)
+        } : undefined}
+      />
+    );
+  }, [
+    handleCloseOverlays,
+    patientFormContext?.status,
+    selectedPatient,
+  ]);
 
   const renderPatient = useCallback(patient => (
     <Box onClick={handleClickPatient(patient)} sx={{ cursor: 'pointer' }}>
       <Text sx={{ display: 'block', fontSize: [1, null, 0], fontWeight: 'medium' }}>{patient.fullName}</Text>
       {showSummaryData && <Text sx={{ fontSize: [0, null, '10px'], whiteSpace: 'nowrap' }}>{t('DOB:')} {patient.birthDate}</Text>}
       {showSummaryData && patient.mrn && <Text sx={{ fontSize: [0, null, '10px'], whiteSpace: 'nowrap' }}>, {t('MRN: {{mrn}}', { mrn: patient.mrn })}</Text>}
+      {showSummaryData && patient.diagnosisType &&
+        <Text sx={{ fontSize: [0, null, '10px'], whiteSpace: 'nowrap' }}>{
+          `, ${t(DIABETES_TYPES().find(type => type.value === patient.diagnosisType)?.label || '')}` // eslint-disable-line new-cap
+        }</Text>
+      }
       {!showSummaryData && patient.email && <Text sx={{ fontSize: [0, null, '10px'] }}>{patient.email}</Text>}
     </Box>
   ), [handleClickPatient, showSummaryData, t]);
@@ -2779,7 +3732,7 @@ export const ClinicPatients = (props) => {
     }
 
     return (
-      <Box classname="patient-last-upload">
+      <Box className="patient-last-upload">
         {formattedLastDataDateCGM && (
           <Box sx={{ whiteSpace: 'nowrap' }}>
             <Text>{t('CGM: ')}</Text>
@@ -2790,7 +3743,7 @@ export const ClinicPatients = (props) => {
                 whiteSpace: 'nowrap',
               }}
             >
-              {formattedLastDataDateCGM.text}
+              {upperFirst(formattedLastDataDateCGM.daysText)}
             </Text>
           </Box>
         )}
@@ -2805,7 +3758,7 @@ export const ClinicPatients = (props) => {
                 whiteSpace: 'nowrap',
               }}
             >
-              {formattedLastDataDateBGM.text}
+              {upperFirst(formattedLastDataDateBGM.daysText)}
             </Text>
           </Box>
         )}
@@ -2867,12 +3820,14 @@ export const ClinicPatients = (props) => {
     trackMetric,
   ]);
 
-  const renderBgRangeSummary = useCallback(({summary}) => {
+  const renderBgRangeSummary = useCallback(({ id, summary, glycemicRanges }) => {
     return <BgSummaryCell
+      id={id}
       summary={summary?.cgmStats?.periods?.[activeSummaryPeriod]}
       config={summary?.cgmStats?.config}
       clinicBgUnits={clinicBgUnits}
       activeSummaryPeriod={activeSummaryPeriod}
+      glycemicRanges={glycemicRanges}
       showExtremeHigh={showExtremeHigh}
     />
   }, [clinicBgUnits, activeSummaryPeriod, showExtremeHigh]);
@@ -2897,9 +3852,11 @@ export const ClinicPatients = (props) => {
     ) : null;
   }, [clinicBgUnits, activeSummaryPeriod, t]);
 
-  const renderBGEvent = useCallback((type, { summary }) => {
+  const renderBGEvent = useCallback((type, { summary, glycemicRanges }) => {
+    const isNonStandardRange = !!glycemicRanges && glycemicRanges !== GLYCEMIC_RANGE.ADA_STANDARD; // undefined glycemicRanges is standard
+
     const rotation = type === 'low' ? 90 : -90;
-    const color = type === 'low' ? 'bg.veryLow' : 'bg.veryHigh';
+    const color = isNonStandardRange ? vizColors.gray30 : (type === 'low' ? 'bg.veryLow' : 'bg.veryHigh');
     const field = type === 'low' ? 'timeInVeryLowRecords' : 'timeInVeryHighRecords';
     const value = summary?.bgmStats?.periods?.[activeSummaryPeriod]?.[field];
     const visibility = value > 0 ? 'visible' : 'hidden';
@@ -2974,6 +3931,7 @@ export const ClinicPatients = (props) => {
       t={t}
       trackMetric={trackMetric}
       setSelectedPatient={setSelectedPatient}
+      setShowDataConnectionsModal={setShowDataConnectionsModal}
       setShowEditPatientDialog={setShowEditPatientDialog}
       prefixPopHealthMetric={prefixPopHealthMetric}
       setShowSendUploadReminderDialog={setShowSendUploadReminderDialog}
@@ -3110,6 +4068,7 @@ export const ClinicPatients = (props) => {
           {
             titleComponent: () => (
               <PopoverLabel
+                id="bg-events-info-popover"
                 icon={InfoOutlinedIcon}
                 iconProps={{
                   sx: { fontSize: '16px' },
@@ -3174,15 +4133,43 @@ export const ClinicPatients = (props) => {
   ]);
 
   const data = useMemo(() => orderBy(values(clinic?.patients), 'sortIndex'), [clinic?.patients]);
-  const tableStyle = useMemo(() => ({ fontSize: showSummaryData ? 0 : 1 }), [showSummaryData]);
+
+  const tableStyle = useMemo(() => ({
+    fontSize: showSummaryData ? 0 : 1,
+
+    // Hide table if no data
+    '&.MuiTable-root': {
+      display: data?.length > 0 ? 'table' : 'none',
+    },
+  }), [data?.length, showSummaryData]);
 
   const renderPeopleTable = useCallback(() => {
     const pageCount = Math.ceil(clinic?.fetchedPatientCount / patientFetchOptions.limit);
     const page = Math.ceil(patientFetchOptions.offset / patientFetchOptions.limit) + 1;
     const sort = patientFetchOptions.sort || defaultPatientFetchOptions.sort;
+
+    const patientListQueryState = getPatientListQueryState(activeFilters, patientListSearchTextInput);
+
+    // Show the Filter Reset Bar only if data exists and any filters/search are applied
+    const showFilterResetBar = (data?.length > 0) && patientListQueryState !== PATIENT_LIST_QUERY_STATE.NONE;
+
     return (
       <Box>
         <Loader show={loading} overlay={true} />
+
+        { showFilterResetBar &&
+          <FilterResetBar
+            patientListQueryState={patientListQueryState}
+            rightSideContent={
+              <ClearFilterButtons
+                patientListQueryState={patientListQueryState}
+                onClearSearch={handleClearSearch}
+                onResetFilters={handleResetFilters}
+              />
+            }
+          />
+        }
+
         <Table
           id={'peopleTable'}
           variant={showSummaryData ? 'condensed' : 'default'}
@@ -3193,6 +4180,15 @@ export const ClinicPatients = (props) => {
           onSort={handleSortChange}
           order={sort?.substring(0, 1) === '+' ? 'asc' : 'desc'}
           orderBy={sort?.substring(1)}
+          emptyContentNode={
+            <EmptyContentNode patientListQueryState={patientListQueryState}>
+              <ClearFilterButtons
+                patientListQueryState={patientListQueryState}
+                onClearSearch={handleClearSearch}
+                onResetFilters={handleResetFilters}
+              />
+            </EmptyContentNode>
+          }
         />
 
         {pageCount > 1 && (
@@ -3224,18 +4220,33 @@ export const ClinicPatients = (props) => {
   ]);
 
   const renderPeopleArea = useCallback(() => {
-    if (!showNames) {
+    if (!isPatientListVisible) {
       return renderPeopleInstructions();
     } else {
       return renderPeopleTable();
     }
-  }, [renderPeopleInstructions, renderPeopleTable, showNames]);
+  }, [renderPeopleInstructions, renderPeopleTable, isPatientListVisible]);
+
+  // Prevent visual glitch from multiple overlapping dialogs
+  const isClinicSitesDialogVisible = (
+    showClinicSitesDialog &&
+    !showUpdateClinicSiteDialog &&
+    !showDeleteClinicSiteDialog
+  );
+
+  const isClinicPatientTagsDialogVisible = (
+    showClinicPatientTagsDialog &&
+    !showUpdateClinicPatientTagDialog &&
+    !showDeleteClinicPatientTagDialog
+  );
 
   return (
     <div>
       {renderHeader()}
       {clinic && renderPeopleArea()}
       {renderRemoveDialog()}
+      {showDeleteClinicSiteDialog && renderDeleteClinicSiteDialog()}
+      {showUpdateClinicSiteDialog && renderUpdateClinicSiteDialog()}
       {showDeleteClinicPatientTagDialog && renderDeleteClinicPatientTagDialog()}
       {showUpdateClinicPatientTagDialog && renderUpdateClinicPatientTagDialog()}
       {showAddPatientDialog && renderAddPatientDialog()}
@@ -3245,7 +4256,10 @@ export const ClinicPatients = (props) => {
       {showRpmReportUI && renderRpmReportLimitDialog()}
       {showTimeInRangeDialog && renderTimeInRangeDialog()}
       {showSendUploadReminderDialog && renderSendUploadReminderDialog()}
-      {showClinicPatientTagsDialog && renderClinicPatientTagsDialog()}
+      {isClinicSitesDialogVisible && renderClinicSitesDialog()}
+      {isClinicPatientTagsDialogVisible && renderClinicPatientTagsDialog()}
+      {showDataConnectionsModal && renderDataConnectionsModal()}
+
       <StyledScrollToTop
         smooth
         top={600}

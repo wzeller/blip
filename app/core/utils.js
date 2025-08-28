@@ -22,8 +22,16 @@ import { format } from 'd3-format';
 
 import { MGDL_UNITS, MMOLL_UNITS, MGDL_PER_MMOLL } from './constants';
 import { utils as vizUtils } from '@tidepool/viz';
+const { bankersRound } = vizUtils.stat;
+import personUtils from '../core/personutils';
 
-const { DEFAULT_BG_BOUNDS } = vizUtils.constants;
+const {
+  GLYCEMIC_RANGE,
+  DEFAULT_BG_BOUNDS,
+  ADA_OLDER_HIGH_RISK_BG_BOUNDS,
+  ADA_PREGNANCY_T1_BG_BOUNDS,
+  ADA_GESTATIONAL_T2_BG_BOUNDS,
+} = vizUtils.constants;
 
 const utils = {};
 
@@ -72,12 +80,32 @@ utils.getIn = (obj, props, notFound) => {
 };
 
 utils.isSupportedBrowser = () => {
-  var userAgent = navigator.userAgent.toLowerCase();
-  return (userAgent.indexOf('chrome') > -1 && userAgent.indexOf('opr') === -1 && userAgent.indexOf('mobi') === -1);
+  const userAgent = navigator.userAgent.toLowerCase();
+
+  const isOpera = userAgent.indexOf('opr') > -1;
+  const isBrave = userAgent.indexOf('brave') > -1;
+  const isFirefox = userAgent.indexOf('firefox') > -1;
+  const isFirefoxIOS = userAgent.indexOf('fxios') > -1;
+
+  if (isOpera || isBrave || isFirefox || isFirefoxIOS) return false;
+
+  const isEdgeIOS = userAgent.indexOf('edgios') > -1;
+  const isChrome = userAgent.indexOf('chrome') > -1;
+  const isChromeIOS = userAgent.indexOf('crios') > -1;
+  const isSafariIOS = userAgent.indexOf('safari') > -1 && /iphone|ipad/.test(userAgent);
+
+  if (isChrome || isChromeIOS || isEdgeIOS || isSafariIOS) return true;
+
+  return false;
 };
 
 utils.isMobile = () => {
   var userAgent = navigator.userAgent.toLowerCase();
+
+  const isIOSDevice = /iphone|ipad/.test(userAgent);
+
+  if (isIOSDevice) return true;
+
   return (userAgent.indexOf('mobi') > -1);
 };
 
@@ -261,6 +289,17 @@ utils.getMedtronic = function(location) {
   return null;
 }
 
+utils.getCBGFilter = function(location) {
+  if (location && location.query) {
+    let { cbgFilter } = location.query;
+
+    if (!_.isUndefined(cbgFilter)) {
+      return cbgFilter;
+    }
+  }
+  return null;
+}
+
 /**
  * Translate a BG value to the desired target unit
  *
@@ -355,41 +394,59 @@ utils.getTimePrefsForDataProcessing = (latestTimeZone, queryParams) => {
   return timePrefsForTideline;
 };
 
-utils.getBGPrefsForDataProcessing = (patientSettings, { units: overrideUnits, source: overrideSource }) => {
-  // Allow overriding stored BG Unit preferences via query param or preferred clinic BG units
-  // If no override is specified, use patient settings units if availiable, otherwise 'mg/dL'
-  const patientSettingsBgUnits = patientSettings?.units?.bg || MGDL_UNITS;
+utils.getBGPrefsForDataProcessing = (
+  patientSettings,
+  clinicPatient,
+  bgUnitsOverride = {}, // { units: 'mmol/L' | 'mg/dL' | 'mmoll' | 'mgdl', source: String }
+) => {
+  // If bgUnits overriden, use those. Otherwise, check if patient has preferred bgUnits.
+  let bgUnits = null;
+  if (!!bgUnitsOverride.units) {
+    bgUnits = bgUnitsOverride.units?.replace('/', '').toLowerCase() === 'mmoll' ? MMOLL_UNITS : MGDL_UNITS;
+  } else {
+    bgUnits = patientSettings?.units?.bg || MGDL_UNITS;
+  }
 
-  const bgUnits = overrideUnits
-    ? (overrideUnits?.replace('/', '').toLowerCase() === 'mmoll' ? MMOLL_UNITS : MGDL_UNITS)
-    : patientSettingsBgUnits;
+  const bounds = (() => {
+    // If user is a PwD, use any self-defined custom bg targets
+    if (_.isEmpty(clinicPatient)) {
+      let low = _.get(patientSettings, 'bgTarget.low', DEFAULT_BG_BOUNDS[bgUnits].targetLowerBound);
+      let high = _.get(patientSettings, 'bgTarget.high', DEFAULT_BG_BOUNDS[bgUnits].targetUpperBound);
 
-  const settingsOverrideActive = patientSettingsBgUnits !== bgUnits;
-  const low = _.get(patientSettings, 'bgTarget.low', DEFAULT_BG_BOUNDS[bgUnits].targetLowerBound);
-  const high = _.get(patientSettings, 'bgTarget.high', DEFAULT_BG_BOUNDS[bgUnits].targetUpperBound);
+      return ({
+        veryLowThreshold: DEFAULT_BG_BOUNDS[bgUnits].veryLowThreshold,
+        targetLowerBound: low,
+        targetUpperBound: high,
+        veryHighThreshold: DEFAULT_BG_BOUNDS[bgUnits].veryHighThreshold,
+        extremeHighThreshold: DEFAULT_BG_BOUNDS[bgUnits].extremeHighThreshold,
+      });
+    }
 
-  var bgClasses = {
-    low: {
-      boundary: utils.roundBgTarget(
-        settingsOverrideActive && patientSettings?.bgTarget?.low ? utils.translateBg(patientSettings.bgTarget.low, bgUnits) : low,
-        bgUnits
-      )
-    },
-    target: {
-      boundary: utils.roundBgTarget(
-        settingsOverrideActive && patientSettings?.bgTarget?.high ? utils.translateBg(patientSettings.bgTarget.high, bgUnits) : high,
-        bgUnits
-      )
-    },
+    // If clinician, use clinic-designated targets, or fall back to default
+    const glycemicRanges = clinicPatient?.glycemicRanges || GLYCEMIC_RANGE.ADA_STANDARD;
+
+    switch(glycemicRanges) {
+      case GLYCEMIC_RANGE.ADA_OLDER_HIGH_RISK: return ADA_OLDER_HIGH_RISK_BG_BOUNDS[bgUnits];
+      case GLYCEMIC_RANGE.ADA_PREGNANCY_T1:    return ADA_PREGNANCY_T1_BG_BOUNDS[bgUnits];
+      case GLYCEMIC_RANGE.ADA_GESTATIONAL_T2:  return ADA_GESTATIONAL_T2_BG_BOUNDS[bgUnits];
+      case GLYCEMIC_RANGE.ADA_STANDARD:        return DEFAULT_BG_BOUNDS[bgUnits];
+      default:                                 return DEFAULT_BG_BOUNDS[bgUnits];
+    }
+  })();
+
+  const bgClasses = {
+    'very-low': { boundary: bounds.veryLowThreshold || null },
+    'low': { boundary: bounds.targetLowerBound || null },
+    'target': { boundary: bounds.targetUpperBound || null },
+    'high': { boundary: bounds.veryHighThreshold || null },
+    'very-high': { boundary: bounds.extremeHighThreshold || null },
   };
-
-  if (settingsOverrideActive) console.log(`Displaying BG in ${bgUnits} from ${overrideSource}`);
 
   return {
-    bgUnits,
     bgClasses,
+    bgUnits,
   };
-}
+};
 
 // from http://bgrins.github.io/devtools-snippets/#console-save
 // MIT license
@@ -450,9 +507,9 @@ utils.readableChartName = chartType => ({
 
 utils.formatDecimal = (val, precision) => {
   if (precision === null || precision === undefined) {
-    return format('d')(val);
+    return bankersRound(val).toString();
   }
-  return format(`.${precision}f`)(val);
+  return bankersRound(val, precision).toFixed(precision);
 };
 
 utils.roundToPrecision = (value, precision = 0) => {
@@ -470,62 +527,30 @@ utils.roundDown = (value, precision = 0) => {
   return Math.floor(value * shift) / shift;
 };
 
-utils.formatThresholdPercentage = (value, comparator, threshold, defaultPrecision = 0) => {
-  let precision = defaultPrecision;
-  let percentage = value * 100;
-  let customRoundingRange;
+utils.parseDatetimeParamToInteger = (queryParam) => {
+  if (!queryParam) return null;
 
-  switch (comparator) {
-    case '<':
-    case '>=':
-      // not fine to round up to the threshold
-      // fine to round down to the threshold
-      // lower than threshold should round down
-      customRoundingRange = [threshold - 0.5, threshold];
+  if (_.isInteger(queryParam)) return queryParam;
 
-      if (percentage >= customRoundingRange[0] && percentage < customRoundingRange[1]) {
-        precision = 1;
-
-        // If natural rounding would round to threshold, force rounding down
-        if (percentage >= threshold - 0.05) {
-          percentage = utils.roundDown(percentage, precision);
-        }
-      }
-      break;
-
-    case '>':
-    case '<=':
-      // fine to round up to the threshold
-      // not fine to round down to the threshold
-      // greater than threshold should round up
-      customRoundingRange = [threshold, threshold + 0.5];
-
-      if (percentage > customRoundingRange[0] && percentage < customRoundingRange[1]) {
-        precision = 1;
-
-        // If natural rounding would round to threshold, force rounding up
-        if (percentage < threshold + 0.05) {
-          percentage = utils.roundUp(percentage, precision);
-        }
-      }
-      break;
+  // arg can be a string representation of an integer, e.g. '1690135500000'
+  if (_.toInteger(queryParam)) {
+    return _.toInteger(queryParam);
   }
 
-  // We want to force extra precision on very small percentages, and for extra small numbers,
-  // force rounding up so that we always show at least 0.01% if the value is technically above zero
-  if (percentage > 0 && percentage < 0.5) {
-    precision = 1;
-
-    if (percentage < 0.05) {
-      precision = 2;
-
-      if (percentage < 0.005) {
-        percentage = utils.roundUp(percentage, precision);
-      }
-    }
+  // arg can be an ISO string, e.g. '2023-07-20T16:00:00.000Z'
+  if (_.isString(queryParam)) {
+    return Date.parse(queryParam) || null;
   }
 
-  return format(`.${precision}f`)(utils.roundToPrecision(percentage, precision));
-}
+  return null;
+};
+
+utils.compareLabels = (string1, string2) => {
+  if (!string1 && !string2) return 0;
+  if (!string1 && string2) return -1;
+  if (string1 && !string2) return 1;
+
+  return string1.localeCompare(string2, undefined, { caseFirst: 'upper', numeric: true });
+};
 
 export default utils;

@@ -95,127 +95,6 @@ export const showingWelcomeMessage = (state = initialState.showingWelcomeMessage
   }
 };
 
-export const showingDonateBanner = (state = initialState.showingDonateBanner, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.type === 'donate' && state !== false) ? true : state;
-    case types.DISMISS_BANNER:
-      return (action.payload.type === 'donate') ? false : state;
-    case types.FETCH_USER_SUCCESS:
-      const dismissedBanner = _.get(action.payload, 'user.preferences.dismissedDonateYourDataBannerTime');
-      return dismissedBanner ? false : state;
-    case types.HIDE_BANNER:
-      return (action.payload.type === 'donate') ? null : state;
-    case types.LOGOUT_REQUEST:
-      return null;
-    default:
-      return state;
-  }
-};
-
-export const showingDexcomConnectBanner = (state = initialState.showingDexcomConnectBanner, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.type === 'dexcom' && state !== false) ? true : state;
-    case types.DISMISS_BANNER:
-      return (action.payload.type === 'dexcom') ? false : state;
-    case types.FETCH_PATIENT_FROM_CLINIC_SUCCESS:
-      const patientDexcomDataSourceConnectState = (_.find(action.payload.patient?.dataSources, { providerName: 'dexcom' }) || {}).state;
-      return patientDexcomDataSourceConnectState === 'error' || state;
-    case types.HIDE_BANNER:
-      return (action.payload.type === 'dexcom') ? null : state;
-    case types.DATA_WORKER_REMOVE_DATA_REQUEST:
-    case types.LOGOUT_REQUEST:
-      return null;
-    default:
-      return state;
-  }
-};
-
-export const showingUpdateTypeBanner = (state = initialState.showingUpdateTypeBanner, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.type === 'updatetype' && state !== false) ? true : state;
-    case types.DISMISS_BANNER:
-      return (action.payload.type === 'updatetype') ? false : state;
-    case types.FETCH_USER_SUCCESS:
-      const dismissedBanner = _.get(action.payload, 'user.preferences.dismissedUpdateTypeBannerTime');
-      const clickedBanner = _.get(action.payload, 'user.preferences.clickedUpdateTypeBannerTime');
-      return (dismissedBanner || clickedBanner) ? false : state;
-    case types.HIDE_BANNER:
-      return (action.payload.type === 'updatetype') ? null : state;
-    case types.LOGOUT_REQUEST:
-      return null;
-    default:
-      return state;
-  }
-};
-
-export const showingUploaderBanner = (state = initialState.showingUploaderBanner, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.type === 'uploader' && state !== false) ? true : state;
-    case types.DISMISS_BANNER:
-      return (action.payload.type === 'uploader') ? false : state;
-    case types.FETCH_USER_SUCCESS:
-      const dismissedBanner = _.get(action.payload, 'user.preferences.dismissedUploaderBannerTime');
-      const clickedBanner = _.get(action.payload, 'user.preferences.clickedUploaderBannerTime');
-      return (dismissedBanner || clickedBanner) ? false : state;
-    case types.HIDE_BANNER:
-      return (action.payload.type === 'uploader') ? null : state;
-    case types.LOGOUT_REQUEST:
-      return null;
-    default:
-      return state;
-  }
-};
-
-export const showingShareDataBanner = (state = initialState.showingShareDataBanner, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.type === 'sharedata' && state !== false) ? true : state;
-    case types.DISMISS_BANNER:
-      return (action.payload.type === 'sharedata') ? false : state;
-    case types.FETCH_USER_SUCCESS:
-      const dismissedBanner = _.get(action.payload, 'user.preferences.dismissedShareDataBannerTime');
-      const clickedBanner = _.get(action.payload, 'user.preferences.clickedShareDataBannerTime');
-      return (dismissedBanner || clickedBanner) ? false : state;
-    case types.HIDE_BANNER:
-      return (action.payload.type === 'sharedata') ? null : state;
-    case types.LOGOUT_REQUEST:
-      return null;
-    default:
-      return state;
-  }
-};
-
-export const seenShareDataBannerMax = (state = initialState.seenShareDataBannerMax, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.count > 2) ? true : state;
-    case types.LOGOUT_REQUEST:
-      return null;
-    default:
-      return state;
-  }
-};
-
-export const showingPatientLimitBanner = (state = initialState.showingShareDataBanner, action) => {
-  switch (action.type) {
-    case types.SHOW_BANNER:
-      return (action.payload.type === 'patientLimit' && state !== false) ? true : state;
-    case types.DISMISS_BANNER:
-      return (action.payload.type === 'patientLimit') ? false : state;
-    case types.HIDE_BANNER:
-      return (action.payload.type === 'patientLimit') ? null : state;
-    case types.LOGOUT_REQUEST:
-    case types.SELECT_CLINIC_SUCCESS:
-      return null;
-    default:
-      return state;
-  }
-};
-
 export const signupKey = (state = initialState.signupKey, action) => {
   switch(action.type) {
     case types.CONFIRM_SIGNUP_FAILURE:
@@ -340,6 +219,8 @@ export const allUsersMap = (state = initialState.allUsersMap, action) => {
       return update(state, { [action.payload.patientId]: { $set: action.payload.patient }});
     case types.UPDATE_SETTINGS_SUCCESS:
       return update(state, { [action.payload.userId]: { settings: { $merge: action.payload.updatedSettings }}});
+    case types.UPDATE_PREFERENCES_SUCCESS:
+      return update(state, { [action.payload.patientId]: { preferences: { $merge: action.payload.updatedPreferences }}});
     case types.LOGOUT_REQUEST:
       return {};
     default:
@@ -656,7 +537,21 @@ export const authorizedDataSource = (state = initialState.authorizedDataSource, 
       let authorizedDataSource = _.get(action.payload, 'authorizedDataSource', {});
       return update(state, { $set: authorizedDataSource });
     case types.LOGOUT_REQUEST:
-      return {};
+    case types.CLEAR_AUTHORIZED_DATA_SOURCE:
+      return null;
+    default:
+      return state;
+  }
+};
+
+export const justConnectedDataSourceProviderName = (state = initialState.justConnectedDataSourceProviderName, action) => {
+  switch (action.type) {
+    case types.SET_JUST_CONNECTED_DATA_SOURCE_PROVIDER_NAME:
+      const providerName = _.get(action.payload, 'providerName', null);
+      return update(state, { $set: providerName });
+    case types.LOGOUT_REQUEST:
+    case types.CLEAR_PATIENT_IN_VIEW:
+      return null;
     default:
       return state;
   }
@@ -709,13 +604,22 @@ export const clinics = (state = initialState.clinics, action) => {
       return _.merge({}, state, newClinics);
     }
     case types.FETCH_PATIENTS_FOR_CLINIC_SUCCESS: {
-      let { clinicId, patients, count } = action.payload;
+      let { clinicId, patients, count, totalCount } = action.payload;
       const newPatientSet = _.reduce(patients, (newSet, patient, i) => {
         newSet[patient.id] = { ...patient, sortIndex: i };
         return newSet;
       }, {});
+
       return update(state, {
-        [clinicId]: { $set: { ...state[clinicId], patients: newPatientSet, fetchedPatientCount: count, lastPatientFetchTime: moment.utc().valueOf() } },
+        [clinicId]: {
+          $set: {
+            ...state[clinicId],
+            patients: newPatientSet,
+            fetchedPatientCount: count,
+            fetchedPatientTotalCount: totalCount,
+            lastPatientFetchTime: moment.utc().valueOf(),
+          },
+        },
       });
     }
     case types.FETCH_PATIENTS_FOR_CLINIC_FAILURE: {
@@ -726,7 +630,12 @@ export const clinics = (state = initialState.clinics, action) => {
         } = action;
         return update(state, {
           [clinicId]: {
-            $set: { ...state[clinicId], patients: {}, fetchedPatientCount: 0 },
+            $set: {
+              ...state[clinicId],
+              patients: {},
+              fetchedPatientCount: 0,
+              fetchedPatientTotalCount: 0,
+            },
           },
         });
       }
@@ -828,6 +737,7 @@ export const clinics = (state = initialState.clinics, action) => {
       const patientId = _.get(action.payload, 'patientId');
       const clinicId = _.get(action.payload, 'clinicId');
       let fetchedPatientCount = state[clinicId].fetchedPatientCount;
+      let fetchedPatientTotalCount = state[clinicId].fetchedPatientTotalCount;
       let patientCount = state[clinicId].patientCount;
 
       // Retain existing sortIndex, or, in the case of a new custodial patient, set to -1 to show at top of
@@ -836,11 +746,18 @@ export const clinics = (state = initialState.clinics, action) => {
 
       if (action.type === types.CREATE_CLINIC_CUSTODIAL_ACCOUNT_SUCCESS) {
         fetchedPatientCount++;
+        fetchedPatientTotalCount++;
         patientCount++;
       }
 
       return update(state, {
-        [clinicId]: { patients: { [patientId]: { $set: { ...patient, sortIndex: existingSortIndex } } }, fetchedPatientCount: { $set: fetchedPatientCount }, patientCount: { $set: patientCount } },
+        [clinicId]: {
+          patients: {
+            [patientId]: { $set: { ...patient, sortIndex: existingSortIndex } } },
+            fetchedPatientCount: { $set: fetchedPatientCount },
+            fetchedPatientTotalCount: { $set: fetchedPatientTotalCount },
+            patientCount: { $set: patientCount },
+          },
       });
     }
     case types.DELETE_CLINICIAN_FROM_CLINIC_SUCCESS: {
@@ -856,6 +773,7 @@ export const clinics = (state = initialState.clinics, action) => {
       let newState = _.cloneDeep(state);
       delete newState[clinicId]?.patients?.[patientId];
       if (newState[clinicId]?.fetchedPatientCount) newState[clinicId].fetchedPatientCount--;
+      if (newState[clinicId]?.fetchedPatientTotalCount) newState[clinicId].fetchedPatientTotalCount--;
       if (newState[clinicId]?.patientCount) newState[clinicId].patientCount--;
       return newState;
     }
@@ -982,18 +900,34 @@ export const clinics = (state = initialState.clinics, action) => {
         },
       });
     }
-    case types.SEND_PATIENT_DEXCOM_CONNECT_REQUEST_SUCCESS: {
+    case types.SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_SUCCESS: {
       const {
         clinicId,
         patientId,
-        lastRequestedDexcomConnectTime,
+        providerName,
+        createdTime,
       } = action.payload;
+
+      const patient = state[clinicId].patients[patientId];
+
+      const connectionRequest = {
+        createdTime: createdTime,
+        providerName: providerName,
+      };
+
+      const updatedProviderConnectionRequests = [
+        connectionRequest,
+        ...(patient.connectionRequests?.[providerName] || []),
+      ];
 
       return update(state, {
         [clinicId]: {
           patients: { [patientId]: { $set: {
-            ...state[clinicId].patients[patientId],
-            lastRequestedDexcomConnectTime,
+            ...patient,
+            connectionRequests: {
+              ...patient.connectionRequests,
+              [providerName]: updatedProviderConnectionRequests,
+            }
           } } },
         },
       });
@@ -1008,6 +942,18 @@ export const clinics = (state = initialState.clinics, action) => {
 
       return update(state, {
         [clinicId]: { patientTags: { $set: patientTags } },
+      });
+    }
+    case types.CREATE_CLINIC_SITE_SUCCESS:
+    case types.UPDATE_CLINIC_SITE_SUCCESS:
+    case types.DELETE_CLINIC_SITE_SUCCESS: {
+      const {
+        clinicId,
+        sites,
+      } = action.payload;
+
+      return update(state, {
+        [clinicId]: { sites: { $set: sites } },
       });
     }
     case types.FETCH_CLINIC_EHR_SETTINGS_SUCCESS: {
@@ -1149,8 +1095,9 @@ export const tideDashboardPatients = (state = initialState.tideDashboardPatients
     case types.FETCH_TIDE_DASHBOARD_PATIENTS_SUCCESS:
       return action?.payload?.results || initialState.tideDashboardPatients;
     case types.UPDATE_CLINIC_PATIENT_SUCCESS:
+    case types.FETCH_PATIENT_FROM_CLINIC_SUCCESS:
       const patient = _.get(action.payload, 'patient');
-      const patientId = _.get(action.payload, 'patientId');
+      const patientId = patient.id;
 
       const newResults = _.reduce(state.results, (results, value, key) => {
         const matchingPatientIndex = _.findIndex(value, ({ patient }) => patient?.id === patientId);

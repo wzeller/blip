@@ -7,6 +7,7 @@ import moment from 'moment-timezone';
 import CheckRoundedIcon from '@material-ui/icons/CheckRounded';
 import { utils as vizUtils } from '@tidepool/viz';
 import get from 'lodash/get';
+import upperFirst from 'lodash/upperFirst';
 
 import HoverButton from '../elements/HoverButton';
 import Icon from '../elements/Icon';
@@ -22,7 +23,7 @@ const {
 
 const t = i18next.t.bind(i18next);
 
-export const PatientLastReviewed = ({ api, patientId, recentlyReviewedThresholdDate, trackMetric, metricSource }) => {
+export const PatientLastReviewed = ({ api, patientId, recentlyReviewedThresholdDate, trackMetric, metricSource, onReview = null }) => {
   const dispatch = useDispatch();
   const isFirstRender = useIsFirstRender();
   const { set: setToast } = useToasts();
@@ -68,6 +69,7 @@ export const PatientLastReviewed = ({ api, patientId, recentlyReviewedThresholdD
   const handleReview = () => {
     trackMetric('Clinic - Mark patient reviewed', { clinicId: selectedClinicId, source: metricSource });
     dispatch(actions.async.setClinicPatientLastReviewed(api, selectedClinicId, patient?.id));
+    onReview && onReview();
   };
 
   const handleUndo = () => {
@@ -78,7 +80,7 @@ export const PatientLastReviewed = ({ api, patientId, recentlyReviewedThresholdD
   let clickHandler = handleReview;
   let buttonText = t('Mark Reviewed');
 
-  let formattedLastReviewed = { text: '-' };
+  let formattedLastReviewed = { daysText: '-' };
   let lastReviewIsToday = false;
   let reviewIsRecent = false;
   let canReview = true;
@@ -131,7 +133,7 @@ export const PatientLastReviewed = ({ api, patientId, recentlyReviewedThresholdD
           }}
         >
           {reviewIsRecent && <Icon variant="static" icon={CheckRoundedIcon} />}
-          {formattedLastReviewed.text}
+          {upperFirst(formattedLastReviewed.daysText)}
         </Text>
       </Box>
     </HoverButton>

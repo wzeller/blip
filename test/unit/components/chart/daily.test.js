@@ -16,7 +16,7 @@ import { withTranslation } from 'react-i18next';
 
 import i18next from '../../../../app/core/language';
 import Daily from '../../../../app/components/chart/daily';
-import { MGDL_UNITS } from '../../../../app/core/constants';
+import { DEFAULT_CGM_SAMPLE_INTERVAL_RANGE, MGDL_UNITS, ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE } from '../../../../app/core/constants';
 import { components as vizComponents } from '@tidepool/viz';
 import createReactClass from 'create-react-class';
 
@@ -72,7 +72,6 @@ describe('Daily', () => {
     onSwitchToSettings: () => {},
     onSwitchToBgLog: () => {},
     onSwitchToTrends: () => {},
-    trackMetric: () => {},
     onUpdateChartDateRange: sinon.stub(),
     patient: {
       profile: {
@@ -190,6 +189,25 @@ describe('Daily', () => {
       expect(chart().length).to.equal(1);
     });
 
+    it('should render the cgm interval toggle, but only if there is a current supporting device', () => {
+      const toggle = () => wrapper.find('CgmSampleIntervalRangeToggle');
+      expect(toggle().length).to.equal(0);
+
+      var hasOneMinCgmSampleIntervalDeviceProps = _.assign({}, baseProps, {
+        loading: false,
+        data: {
+          query: { chartType: 'daily' },
+          metaData: { devices: [{ oneMinCgmSampleInterval: true }] },
+        },
+        chartPrefs: {
+          daily: { bgSource: 'cbg' },
+        },
+      });
+
+      wrapper.setProps(hasOneMinCgmSampleIntervalDeviceProps);
+      expect(toggle().length).to.equal(1);
+    });
+
     it('should render the bg toggle', () => {
       const toggle = wrapper.find('BgSourceToggle');
       expect(toggle.length).to.equal(1);
@@ -260,6 +278,140 @@ describe('Daily', () => {
       sinon.assert.calledWith(baseProps.updateChartPrefs, {
         daily: { bgSource: 'smbg' },
       });
+    });
+  });
+
+  describe('toggleCgmSampleIntervalRange', () => {
+    it('should track metric when toggled', () => {
+      instance.toggleCgmSampleIntervalRange(null, ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE);
+      sinon.assert.callCount(baseProps.trackMetric, 1);
+      sinon.assert.calledWith(baseProps.trackMetric, 'Daily Click CGM Sample Interval to 1min');
+
+      instance.toggleCgmSampleIntervalRange(null, DEFAULT_CGM_SAMPLE_INTERVAL_RANGE);
+      sinon.assert.callCount(baseProps.trackMetric, 2);
+      sinon.assert.calledWith(baseProps.trackMetric, 'Daily Click CGM Sample Interval to 5min');
+    });
+
+    it('should call the `updateChartPrefs` handler to update the cgmSampleIntervalRange', () => {
+      instance.toggleCgmSampleIntervalRange(null, ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE);
+
+      sinon.assert.callCount(baseProps.updateChartPrefs, 1);
+      sinon.assert.calledWith(baseProps.updateChartPrefs, {
+        daily: { cgmSampleIntervalRange: ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE },
+      });
+
+      instance.toggleCgmSampleIntervalRange(null, DEFAULT_CGM_SAMPLE_INTERVAL_RANGE);
+
+      sinon.assert.callCount(baseProps.updateChartPrefs, 2);
+      sinon.assert.calledWith(baseProps.updateChartPrefs, {
+        daily: { cgmSampleIntervalRange: DEFAULT_CGM_SAMPLE_INTERVAL_RANGE },
+      });
+    });
+  });
+
+  describe('handleAlarmHover', () => {
+    it('should set hoveredAlarm state with correct positioning', () => {
+      const alarm = {
+        rect: {
+          top: 100,
+          left: 200,
+          width: 20,
+          height: 30,
+        },
+        chartExtents: {
+          left: 50,
+          right: 400,
+        },
+        data: { type: 'alarm' },
+      };
+
+      instance.handleAlarmHover(alarm);
+
+      expect(instance.state.hoveredAlarm).to.deep.equal({
+        ...alarm,
+        top: 130, // rect.top + rect.height
+        left: 210, // rect.left + (rect.width / 2)
+        side: 'bottom',
+      });
+    });
+
+    it('should adjust leftOffset when tooltip would spill over left edge', () => {
+      const alarm = {
+        rect: {
+          top: 100,
+          left: 60, // Close to left edge
+          width: 20,
+          height: 30,
+        },
+        chartExtents: {
+          left: 50,
+          right: 400,
+        },
+        data: { type: 'alarm' },
+      };
+
+      instance.handleAlarmHover(alarm);
+
+      const hoveredAlarm = instance.state.hoveredAlarm;
+      expect(hoveredAlarm.leftOffset).to.equal(35);
+    });
+
+    it('should adjust leftOffset when tooltip would spill over right edge', () => {
+      const alarm = {
+        rect: {
+          top: 100,
+          left: 390, // Close to right edge
+          width: 20,
+          height: 30,
+        },
+        chartExtents: {
+          left: 50,
+          right: 400,
+        },
+        data: { type: 'alarm' },
+      };
+
+      instance.handleAlarmHover(alarm);
+
+      const hoveredAlarm = instance.state.hoveredAlarm;
+      expect(hoveredAlarm.leftOffset).to.equal(-35);
+    });
+
+    it('should track metric when hovering over alarm', () => {
+      const alarm = {
+        rect: {
+          top: 100,
+          left: 200,
+          width: 20,
+          height: 30,
+        },
+        chartExtents: {
+          left: 50,
+          right: 400,
+        },
+        data: { type: 'alarm' },
+      };
+
+      instance.handleAlarmHover(alarm);
+
+      expect(baseProps.trackMetric.calledWith('hovered over daily alarm tooltip')).to.be.true;
+    });
+  });
+
+  describe('handleAlarmOut', () => {
+    it('should set hoveredAlarm state to false', () => {
+      // First set a hoveredAlarm
+      instance.setState({
+        hoveredAlarm: {
+          data: { type: 'alarm' },
+          top: 100,
+          left: 200,
+        },
+      });
+
+      instance.handleAlarmOut();
+
+      expect(instance.state.hoveredAlarm).to.be.false;
     });
   });
 });

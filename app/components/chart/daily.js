@@ -23,7 +23,7 @@ import ReactDOM from 'react-dom';
 import sundial from 'sundial';
 import WindowSizeListener from 'react-window-size-listener';
 import { withTranslation } from 'react-i18next';
-import { Flex } from 'theme-ui';
+import { Box, Flex } from 'theme-ui';
 
 import Stats from './stats';
 import BgSourceToggle from './bgSourceToggle';
@@ -41,8 +41,11 @@ const SMBGTooltip = vizComponents.SMBGTooltip;
 const CBGTooltip = vizComponents.CBGTooltip;
 const FoodTooltip = vizComponents.FoodTooltip;
 const PumpSettingsOverrideTooltip = vizComponents.PumpSettingsOverrideTooltip;
+const AlarmTooltip = vizComponents.AlarmTooltip;
 
 import Header from './header';
+import CgmSampleIntervalRangeToggle from './cgmSampleIntervalRangeToggle';
+import { DEFAULT_CGM_SAMPLE_INTERVAL_RANGE } from '../../core/constants';
 
 const DailyChart = withTranslation(null, { withRef: true })(class DailyChart extends Component {
   static propTypes = {
@@ -95,6 +98,8 @@ const DailyChart = withTranslation(null, { withRef: true })(class DailyChart ext
       'onCarbOut',
       'onPumpSettingsOverrideHover',
       'onPumpSettingsOverrideOut',
+      'onAlarmHover',
+      'onAlarmOut',
     ];
 
     this.log = bows('Daily Chart');
@@ -119,22 +124,29 @@ const DailyChart = withTranslation(null, { withRef: true })(class DailyChart ext
 
   mountChart = (props = this.props) => {
     this.log('Mounting...');
-    this.chart = chartDailyFactory(ReactDOM.findDOMNode(this), _.pick(props, this.chartOpts))
+
+    const node = ReactDOM.findDOMNode(this);
+
+    // When on mobile, the chart will be hidden and therefore have zero width and height.
+    // This safety check prevents an error from occurring in tideline due to the zeroes.
+    if (!node?.offsetHeight || !node?.offsetWidth) return;
+
+    this.chart = chartDailyFactory(node, _.pick(props, this.chartOpts))
       .setupPools();
     this.bindEvents();
   };
 
   unmountChart = () => {
     this.log('Unmounting...');
-    this.chart.destroy();
+    this.chart?.destroy();
   };
 
   bindEvents = () => {
-    this.chart.emitter.on('createMessage', this.props.onCreateMessage);
-    this.chart.emitter.on('inTransition', this.props.onTransition);
-    this.chart.emitter.on('messageThread', this.props.onShowMessageThread);
-    this.chart.emitter.on('mostRecent', this.props.onMostRecent);
-    this.chart.emitter.on('navigated', this.handleDatetimeLocationChange);
+    this.chart?.emitter.on('createMessage', this.props.onCreateMessage);
+    this.chart?.emitter.on('inTransition', this.props.onTransition);
+    this.chart?.emitter.on('messageThread', this.props.onShowMessageThread);
+    this.chart?.emitter.on('mostRecent', this.props.onMostRecent);
+    this.chart?.emitter.on('navigated', this.handleDatetimeLocationChange);
   };
 
   initializeChart = (props = this.props, datetime) => {
@@ -144,15 +156,15 @@ const DailyChart = withTranslation(null, { withRef: true })(class DailyChart ext
       throw new Error(t('Cannot create new chart with no data'));
     }
 
-    this.chart.load(props.data);
+    this.chart?.load(props.data);
     if (datetime) {
-      this.chart.locate(datetime);
+      this.chart?.locate(datetime);
     }
     else if (this.state.datetimeLocation !== null) {
-      this.chart.locate(this.state.datetimeLocation);
+      this.chart?.locate(this.state.datetimeLocation);
     }
     else {
-      this.chart.locate();
+      this.chart?.locate();
     }
   };
 
@@ -176,36 +188,36 @@ const DailyChart = withTranslation(null, { withRef: true })(class DailyChart ext
     this.unmountChart();
     this.mountChart(chartProps);
     this.initializeChart(chartProps);
-    this.chart.emitter.emit('inTransition', false);
+    this.chart?.emitter.emit('inTransition', false);
   };
 
   getCurrentDay = () => {
-    return this.chart.getCurrentDay().toISOString();
+    return this.chart?.getCurrentDay().toISOString();
   };
 
   goToMostRecent = () => {
-    this.chart.setAtDate(null, true);
+    this.chart?.setAtDate(null, true);
   };
 
   panBack = () => {
-    this.chart.panBack();
+    this.chart?.panBack();
   };
 
   panForward = () => {
-    this.chart.panForward();
+    this.chart?.panForward();
   };
 
   // methods for messages
   closeMessage = () => {
-    return this.chart.closeMessage();
+    return this.chart?.closeMessage();
   };
 
   createMessage = message => {
-    return this.chart.createMessage(message);
+    return this.chart?.createMessage(message);
   };
 
   editMessage = message => {
-    return this.chart.editMessage(message);
+    return this.chart?.editMessage(message);
   };
 });
 
@@ -265,12 +277,10 @@ class Daily extends Component {
     const newDataAdded = this.props.addingData.inProgress && nextProps.addingData.completed;
     const dataUpdated = this.props.updatingDatum.inProgress && nextProps.updatingDatum.completed;
     const newDataRecieved = this.props.queryDataCount !== nextProps.queryDataCount;
-    const bgRangeUpdated = this.props.data?.bgPrefs?.useDefaultRange !== nextProps.data?.bgPrefs?.useDefaultRange;
 
     if (this.chartRef.current) {
       const updates = {};
       if (loadingJustCompleted || newDataAdded || dataUpdated || newDataRecieved) updates.data = nextProps.data;
-      if (nextProps.data?.bgPrefs?.bgClasses && bgRangeUpdated) updates.bgClasses = nextProps.data.bgPrefs.bgClasses;
       if (!_.isEmpty(updates)) this.chartRef.current?.rerenderChart(updates);
     }
   };
@@ -288,41 +298,46 @@ class Daily extends Component {
 
     return (
       <div id="tidelineMain" className="daily">
-        <Header
-          chartType={this.chartType}
-          patient={this.props.patient}
-          inTransition={this.state.inTransition}
-          atMostRecent={this.state.atMostRecent}
-          title={this.state.title}
-          iconBack={'icon-back'}
-          iconNext={'icon-next'}
-          iconMostRecent={'icon-most-recent'}
-          onClickBack={this.handlePanBack}
-          onClickBasics={this.props.onSwitchToBasics}
-          onClickChartDates={this.props.onClickChartDates}
-          onClickTrends={this.handleClickTrends}
-          onClickMostRecent={this.handleClickMostRecent}
-          onClickNext={this.handlePanForward}
-          onClickOneDay={this.handleClickOneDay}
-          onClickSettings={this.props.onSwitchToSettings}
-          onClickBgLog={this.handleClickBgLog}
-          onClickPrint={this.handleClickPrint}
-          ref={this.headerRef} />
-        <div className="container-box-outer patient-data-content-outer">
-          <div className="container-box-inner patient-data-content-inner">
-            <div className="patient-data-content">
-              <Loader show={!!this.chartRef && this.props.loading} overlay={true} />
-              {dataQueryComplete && this.renderChart()}
+        <Box variant="containers.patientData">
+          <Header
+            chartType={this.chartType}
+            patient={this.props.patient}
+            inTransition={this.state.inTransition}
+            atMostRecent={this.state.atMostRecent}
+            title={this.state.title}
+            iconBack={'icon-back'}
+            iconNext={'icon-next'}
+            iconMostRecent={'icon-most-recent'}
+            onClickBack={this.handlePanBack}
+            onClickBasics={this.props.onSwitchToBasics}
+            onClickChartDates={this.props.onClickChartDates}
+            onClickTrends={this.handleClickTrends}
+            onClickMostRecent={this.handleClickMostRecent}
+            onClickNext={this.handlePanForward}
+            onClickOneDay={this.handleClickOneDay}
+            onClickSettings={this.props.onSwitchToSettings}
+            onClickBgLog={this.handleClickBgLog}
+            onClickPrint={this.handleClickPrint}
+            ref={this.headerRef}
+          />
 
-              <Flex mt={3} mb={5} pl="40px">
-                <Button className="btn-refresh" variant="secondary" onClick={this.props.onClickRefresh}>
+          <Box variant="containers.patientDataInner">
+            <Box className="patient-data-content" variant="containers.patientDataContent">
+                <Loader show={!!this.chartRef && this.props.loading} overlay={true} />
+                {dataQueryComplete && this.renderChart()}
+
+                <Button
+                  className="btn-refresh"
+                  variant="secondaryCondensed"
+                  onClick={this.props.onClickRefresh}
+                  mt={3}
+                  ml="40px"
+                >
                   {this.props.t('Refresh')}
                 </Button>
-              </Flex>
-            </div>
-          </div>
-          <div className="container-box-inner patient-data-sidebar">
-            <div className="patient-data-sidebar-inner">
+            </Box>
+
+            <Box className="patient-data-sidebar" variant="containers.patientDataSidebar">
               <Flex mb={2} sx={{ justifyContent: 'flex-end' }}>
                 <BgSourceToggle
                   bgSources={_.get(this.props, 'data.metaData.bgSources', {})}
@@ -346,60 +361,73 @@ class Daily extends Component {
                 trackMetric={this.props.trackMetric}
                 updateChartPrefs={this.props.updateChartPrefs}
               />
-            </div>
-          </div>
-        </div>
-        {this.state.hoveredBolus && <BolusTooltip
-          position={{
-            top: this.state.hoveredBolus.top,
-            left: this.state.hoveredBolus.left
-          }}
-          side={this.state.hoveredBolus.side}
-          bolus={this.state.hoveredBolus.data}
-          bgPrefs={bgPrefs}
-          timePrefs={timePrefs}
-        />}
-        {this.state.hoveredSMBG && <SMBGTooltip
-          position={{
-            top: this.state.hoveredSMBG.top,
-            left: this.state.hoveredSMBG.left
-          }}
-          side={this.state.hoveredSMBG.side}
-          smbg={this.state.hoveredSMBG.data}
-          timePrefs={timePrefs}
-          bgPrefs={bgPrefs}
-        />}
-        {this.state.hoveredCBG && <CBGTooltip
-          position={{
-            top: this.state.hoveredCBG.top,
-            left: this.state.hoveredCBG.left
-          }}
-          side={this.state.hoveredCBG.side}
-          cbg={this.state.hoveredCBG.data}
-          timePrefs={timePrefs}
-          bgPrefs={bgPrefs}
-        />}
-        {this.state.hoveredCarb && <FoodTooltip
-          position={{
-            top: this.state.hoveredCarb.top,
-            left: this.state.hoveredCarb.left
-          }}
-          side={this.state.hoveredCarb.side}
-          food={this.state.hoveredCarb.data}
-          bgPrefs={bgPrefs}
-          timePrefs={timePrefs}
-        />}
-        {this.state.hoveredPumpSettingsOverride && <PumpSettingsOverrideTooltip
-          position={{
-            top: this.state.hoveredPumpSettingsOverride.top,
-            left: this.state.hoveredPumpSettingsOverride.left
-          }}
-          side={this.state.hoveredPumpSettingsOverride.side}
-          override={this.state.hoveredPumpSettingsOverride.data}
-          bgPrefs={bgPrefs}
-          timePrefs={timePrefs}
-        />}
-        <WindowSizeListener onResize={this.handleWindowResize} />
+            </Box>
+          </Box>
+          {this.state.hoveredBolus && <BolusTooltip
+            position={{
+              top: this.state.hoveredBolus.top,
+              left: this.state.hoveredBolus.left
+            }}
+            side={this.state.hoveredBolus.side}
+            bolus={this.state.hoveredBolus.data}
+            bgPrefs={bgPrefs}
+            timePrefs={timePrefs}
+          />}
+          {this.state.hoveredSMBG && <SMBGTooltip
+            position={{
+              top: this.state.hoveredSMBG.top,
+              left: this.state.hoveredSMBG.left
+            }}
+            side={this.state.hoveredSMBG.side}
+            smbg={this.state.hoveredSMBG.data}
+            timePrefs={timePrefs}
+            bgPrefs={bgPrefs}
+          />}
+          {this.state.hoveredCBG && <CBGTooltip
+            position={{
+              top: this.state.hoveredCBG.top,
+              left: this.state.hoveredCBG.left
+            }}
+            side={this.state.hoveredCBG.side}
+            cbg={this.state.hoveredCBG.data}
+            timePrefs={timePrefs}
+            bgPrefs={bgPrefs}
+          />}
+          {this.state.hoveredCarb && <FoodTooltip
+            position={{
+              top: this.state.hoveredCarb.top,
+              left: this.state.hoveredCarb.left
+            }}
+            side={this.state.hoveredCarb.side}
+            food={this.state.hoveredCarb.data}
+            bgPrefs={bgPrefs}
+            timePrefs={timePrefs}
+          />}
+          {this.state.hoveredPumpSettingsOverride && <PumpSettingsOverrideTooltip
+            position={{
+              top: this.state.hoveredPumpSettingsOverride.top,
+              left: this.state.hoveredPumpSettingsOverride.left
+            }}
+            side={this.state.hoveredPumpSettingsOverride.side}
+            override={this.state.hoveredPumpSettingsOverride.data}
+            bgPrefs={bgPrefs}
+            timePrefs={timePrefs}
+          />}
+          {this.state.hoveredAlarm && <AlarmTooltip
+            position={{
+              top: this.state.hoveredAlarm.top,
+              left: this.state.hoveredAlarm.left
+            }}
+            offset={{
+              top: 0,
+              left: this.state.hoveredAlarm.leftOffset || 0
+            }}
+            side={this.state.hoveredAlarm.side}
+            alarm={this.state.hoveredAlarm.data}
+            timePrefs={timePrefs}
+          />}
+          <WindowSizeListener onResize={this.handleWindowResize} />
+        </Box>
       </div>
       );
   };
@@ -408,6 +436,7 @@ class Daily extends Component {
     const timePrefs = _.get(this.props, 'data.timePrefs', {});
     const bgPrefs = _.get(this.props, 'data.bgPrefs', {});
     const carbUnits = ['grams'];
+    const showingCgmData = _.get(this.props, 'chartPrefs.daily.bgSource')  === 'cbg';
 
     const {
       isAutomatedBasalDevice,
@@ -419,40 +448,59 @@ class Daily extends Component {
       { type: 'wizard', carbUnits: 'exchanges' }
     );
 
+    const hasOneMinCgmSampleIntervalDevice = _.some(
+      _.get(this.props, 'data.metaData.devices'),
+      { oneMinCgmSampleInterval: true }
+    );
+
     if (hasCarbExchanges) carbUnits.push('exchanges');
 
     return (
-      <DailyChart
-        automatedBasal={isAutomatedBasalDevice}
-        automatedBolus={isAutomatedBolusDevice}
-        bgClasses={bgPrefs.bgClasses}
-        bgUnits={bgPrefs.bgUnits}
-        bolusRatio={this.props.chartPrefs.bolusRatio}
-        carbUnits={carbUnits}
-        data={this.props.data}
-        dynamicCarbs={this.props.chartPrefs.dynamicCarbs}
-        initialDatetimeLocation={this.props.initialDatetimeLocation}
-        timePrefs={timePrefs}
-        // message handlers
-        onCreateMessage={this.props.onCreateMessage}
-        onShowMessageThread={this.props.onShowMessageThread}
-        // other handlers
-        onDatetimeLocationChange={this.handleDatetimeLocationChange}
-        onHideBasalSettings={this.handleHideBasalSettings}
-        onMostRecent={this.handleMostRecent}
-        onShowBasalSettings={this.handleShowBasalSettings}
-        onTransition={this.handleInTransition}
-        onBolusHover={this.handleBolusHover}
-        onBolusOut={this.handleBolusOut}
-        onSMBGHover={this.handleSMBGHover}
-        onSMBGOut={this.handleSMBGOut}
-        onCBGHover={this.handleCBGHover}
-        onCBGOut={this.handleCBGOut}
-        onCarbHover={this.handleCarbHover}
-        onCarbOut={this.handleCarbOut}
-        onPumpSettingsOverrideHover={this.handlePumpSettingsOverrideHover}
-        onPumpSettingsOverrideOut={this.handlePumpSettingsOverrideOut}
-        ref={this.chartRef} />
+      <>
+        {showingCgmData && hasOneMinCgmSampleIntervalDevice && (
+          <Flex sx={{ justifyContent: 'flex-end', alignItems: 'center' }}>
+            <CgmSampleIntervalRangeToggle
+              chartPrefs={this.props.chartPrefs}
+              chartType={this.chartType}
+              onClickCgmSampleIntervalRangeToggle={this.toggleCgmSampleIntervalRange}
+            />
+          </Flex>
+        )}
+
+        <DailyChart
+          automatedBasal={isAutomatedBasalDevice}
+          automatedBolus={isAutomatedBolusDevice}
+          bgClasses={bgPrefs.bgClasses}
+          bgUnits={bgPrefs.bgUnits}
+          bolusRatio={this.props.chartPrefs.bolusRatio}
+          carbUnits={carbUnits}
+          data={this.props.data}
+          dynamicCarbs={this.props.chartPrefs.dynamicCarbs}
+          initialDatetimeLocation={this.props.initialDatetimeLocation}
+          timePrefs={timePrefs}
+          // message handlers
+          onCreateMessage={this.props.onCreateMessage}
+          onShowMessageThread={this.props.onShowMessageThread}
+          // other handlers
+          onDatetimeLocationChange={this.handleDatetimeLocationChange}
+          onHideBasalSettings={this.handleHideBasalSettings}
+          onMostRecent={this.handleMostRecent}
+          onShowBasalSettings={this.handleShowBasalSettings}
+          onTransition={this.handleInTransition}
+          onBolusHover={this.handleBolusHover}
+          onBolusOut={this.handleBolusOut}
+          onSMBGHover={this.handleSMBGHover}
+          onSMBGOut={this.handleSMBGOut}
+          onCBGHover={this.handleCBGHover}
+          onCBGOut={this.handleCBGOut}
+          onCarbHover={this.handleCarbHover}
+          onCarbOut={this.handleCarbOut}
+          onPumpSettingsOverrideHover={this.handlePumpSettingsOverrideHover}
+          onPumpSettingsOverrideOut={this.handlePumpSettingsOverrideOut}
+          onAlarmHover={this.handleAlarmHover}
+          onAlarmOut={this.handleAlarmOut}
+          ref={this.chartRef} />
+      </>
     );
   }
 
@@ -482,6 +530,19 @@ class Daily extends Component {
     const prefs = _.cloneDeep(this.props.chartPrefs);
     prefs.daily.bgSource = bgSource;
     this.props.updateChartPrefs(prefs, false, true);
+  };
+
+  toggleCgmSampleIntervalRange = (e, cgmSampleIntervalRange) => {
+    if (e) {
+      e.preventDefault();
+    }
+
+    const changedTo = _.isEqual(cgmSampleIntervalRange, DEFAULT_CGM_SAMPLE_INTERVAL_RANGE) ? '5min' : '1min';
+    this.props.trackMetric(`Daily Click CGM Sample Interval to ${changedTo}`);
+
+    const prefs = _.cloneDeep(this.props.chartPrefs);
+    prefs.daily.cgmSampleIntervalRange = cgmSampleIntervalRange;
+    this.props.updateChartPrefs(prefs);
   };
 
   handleWindowResize = () => {
@@ -659,6 +720,36 @@ class Daily extends Component {
     });
   };
 
+  handleAlarmHover = alarm => {
+    this.throttledMetric('hovered over daily alarm tooltip');
+    const rect = alarm.rect;
+    alarm.top = rect.top + rect.height;
+    alarm.left = rect.left + (rect.width / 2);
+    alarm.side = 'bottom';
+
+    // Prevent the tooltip from spilling over chart edges
+    const leftOffset = alarm.left - alarm.chartExtents.left;
+    const rightOffset = alarm.left - alarm.chartExtents.right;
+
+    if (leftOffset < 35) {
+      alarm.leftOffset = 35;
+    }
+
+    if (rightOffset > -35) {
+      alarm.leftOffset = -35;
+    }
+
+    this.setState({
+      hoveredAlarm: alarm
+    });
+  };
+
+  handleAlarmOut = () => {
+    this.setState({
+      hoveredAlarm: false
+    });
+  };
+
   handleCarbHover = carb => {
     var rect = carb.rect;
     // range here is -12 to 12
@@ -700,19 +791,6 @@ class Daily extends Component {
       e.preventDefault();
     }
     this.chartRef.current?.panForward();
-  };
-
-  // methods for messages
-  closeMessageThread = () => {
-    return this.chartRef.current?.closeMessage();
-  };
-
-  createMessageThread = message => {
-    return this.chartRef.current?.createMessage(message);
-  };
-
-  editMessageThread = message => {
-    return this.chartRef.current?.editMessage(message);
   };
 }
 

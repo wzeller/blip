@@ -32,34 +32,6 @@ export function hideWelcomeMessage() {
   };
 }
 
-export function showBanner(type) {
-  return {
-    type: ActionTypes.SHOW_BANNER,
-    payload: { type },
-  };
-}
-
-export function hideBanner(type) {
-  return {
-    type: ActionTypes.HIDE_BANNER,
-    payload: { type },
-  };
-}
-
-export function dismissBanner(type) {
-  return {
-    type: ActionTypes.DISMISS_BANNER,
-    payload: { type },
-  };
-}
-
-export function bannerCount(count) {
-  return {
-    type: ActionTypes.SHOW_BANNER,
-    payload: { count },
-  };
-}
-
 export function acknowledgeNotification(acknowledgedNotification) {
   return {
     type: ActionTypes.ACKNOWLEDGE_NOTIFICATION,
@@ -582,10 +554,11 @@ export function updatePreferencesRequest() {
   };
 }
 
-export function updatePreferencesSuccess(preferences) {
+export function updatePreferencesSuccess(patientId, preferences) {
   return {
     type: ActionTypes.UPDATE_PREFERENCES_SUCCESS,
     payload: {
+      patientId: patientId,
       updatedPreferences: preferences,
     },
   };
@@ -1172,6 +1145,21 @@ export function connectDataSourceSuccess(id, url) {
   };
 }
 
+export function clearAuthorizedDataSource() {
+  return {
+    type: ActionTypes.CLEAR_AUTHORIZED_DATA_SOURCE,
+  };
+}
+
+export function setJustConnectedDataSourceProviderName(providerName) {
+  return {
+    type: ActionTypes.SET_JUST_CONNECTED_DATA_SOURCE_PROVIDER_NAME,
+    payload: {
+      providerName: providerName,
+    },
+  };
+}
+
 export function connectDataSourceFailure(error, apiError) {
   return {
     type: ActionTypes.CONNECT_DATA_SOURCE_FAILURE,
@@ -1471,11 +1459,12 @@ export function fetchPatientsForClinicRequest() {
   };
 }
 
-export function fetchPatientsForClinicSuccess(clinicId, patients, count) {
+export function fetchPatientsForClinicSuccess(clinicId, patients, count, totalCount) {
   return {
     type: ActionTypes.FETCH_PATIENTS_FOR_CLINIC_SUCCESS,
     payload: {
       count: count,
+      totalCount: totalCount,
       patients: patients,
       clinicId: clinicId,
     },
@@ -2104,26 +2093,105 @@ export function revertClinicPatientLastReviewedFailure(error, apiError) {
   };
 }
 
-export function sendPatientDexcomConnectRequestRequest() {
+export function sendPatientDataProviderConnectRequestRequest() {
   return {
-    type: ActionTypes.SEND_PATIENT_DEXCOM_CONNECT_REQUEST_REQUEST,
+    type: ActionTypes.SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_REQUEST,
   };
 }
 
-export function sendPatientDexcomConnectRequestSuccess(clinicId, patientId, lastRequestedDexcomConnectTime) {
+export function sendPatientDataProviderConnectRequestSuccess(clinicId, patientId, providerName, createdTime) {
   return {
-    type: ActionTypes.SEND_PATIENT_DEXCOM_CONNECT_REQUEST_SUCCESS,
+    type: ActionTypes.SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_SUCCESS,
     payload: {
       clinicId: clinicId,
       patientId: patientId,
-      lastRequestedDexcomConnectTime: lastRequestedDexcomConnectTime,
+      providerName: providerName,
+      createdTime: createdTime,
     },
   };
 }
 
-export function sendPatientDexcomConnectRequestFailure(error, apiError) {
+export function sendPatientDataProviderConnectRequestFailure(error, apiError) {
   return {
-    type: ActionTypes.SEND_PATIENT_DEXCOM_CONNECT_REQUEST_FAILURE,
+    type: ActionTypes.SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_FAILURE,
+    error: error,
+    meta: {
+      apiError: apiError || null,
+    },
+  };
+}
+
+export function createClinicSiteRequest() {
+  return {
+    type: ActionTypes.CREATE_CLINIC_SITE_REQUEST,
+  };
+}
+
+export function createClinicSiteSuccess(clinicId, sites) {
+  return {
+    type: ActionTypes.CREATE_CLINIC_SITE_SUCCESS,
+    payload: {
+      clinicId: clinicId,
+      sites: sites,
+    },
+  };
+}
+
+export function createClinicSiteFailure(error, apiError) {
+  return {
+    type: ActionTypes.CREATE_CLINIC_SITE_FAILURE,
+    error: error,
+    meta: {
+      apiError: apiError || null,
+    },
+  };
+}
+
+export function updateClinicSiteRequest() {
+  return {
+    type: ActionTypes.UPDATE_CLINIC_SITE_REQUEST,
+  };
+}
+
+export function updateClinicSiteSuccess(clinicId, sites) {
+  return {
+    type: ActionTypes.UPDATE_CLINIC_SITE_SUCCESS,
+    payload: {
+      clinicId: clinicId,
+      sites: sites,
+    },
+  };
+}
+
+export function updateClinicSiteFailure(error, apiError) {
+  return {
+    type: ActionTypes.UPDATE_CLINIC_SITE_FAILURE,
+    error: error,
+    meta: {
+      apiError: apiError || null,
+    },
+  };
+}
+
+export function deleteClinicSiteRequest() {
+  return {
+    type: ActionTypes.DELETE_CLINIC_SITE_REQUEST,
+  };
+}
+
+export function deleteClinicSiteSuccess(clinicId, sites) {
+  return {
+    type: ActionTypes.DELETE_CLINIC_SITE_SUCCESS,
+    payload: {
+      clinicId: clinicId,
+      sites: sites,
+    },
+  };
+}
+
+export function deleteClinicSiteFailure(error, apiError) {
+  return {
+    type: ActionTypes.DELETE_CLINIC_SITE_FAILURE,
     error: error,
     meta: {
       apiError: apiError || null,
@@ -2460,5 +2528,19 @@ export function setPendoData(data) {
   return {
     type: ActionTypes.SET_PENDO_DATA,
     payload: { data },
+  };
+}
+
+export function setIsPatientListVisible(isVisible) {
+  return {
+    type: ActionTypes.SET_IS_PATIENT_LIST_VISIBLE,
+    payload: { isVisible },
+  };
+}
+
+export function setPatientListSearchTextInput(textInput) {
+  return {
+    type: ActionTypes.SET_PATIENT_LIST_SEARCH_TEXT_INPUT,
+    payload: { textInput },
   };
 }

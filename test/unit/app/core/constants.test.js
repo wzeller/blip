@@ -47,28 +47,6 @@ describe('constants', function() {
     expect(Constants.LBS_PER_KG).to.equal(2.2046226218);
   });
 
-  it('should define the default filter thresholds', () => {
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS).to.be.an('object').and.have.all.keys([
-      'veryLow',
-      'low',
-      'target',
-      'high',
-      'veryHigh',
-      'extremeHigh',
-      'cgmUse',
-      'timeInTargetPercentDelta',
-    ]);
-
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.veryLow).to.eql(['>', 1]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.low).to.eql(['>', 4]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.target).to.eql(['<', 70]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.high).to.eql(['>', 25]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.veryHigh).to.eql(['>', 5]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.extremeHigh).to.eql(['>', 1]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.cgmUse).to.eql(['<', 70]);
-    expect(Constants.DEFAULT_FILTER_THRESHOLDS.timeInTargetPercentDelta).to.eql(['>', 15, 1]);
-  });
-
   it('should define the tidepool big data donation account email', function() {
     expect(Constants.TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL).to.equal('bigdata@tidepool.org');
   });
@@ -94,6 +72,7 @@ describe('constants', function() {
     expect(_.map(Constants.DIABETES_TYPES(), 'value')).to.eql([ // eslint-disable-line new-cap
       'type1',
       'type2',
+      'type3c',
       'gestational',
       'prediabetes',
       'lada',
@@ -150,5 +129,17 @@ describe('constants', function() {
 
   it('should define CLINIC_REMAINING_PATIENTS_WARNING_THRESHOLD', () => {
     expect(Constants.CLINIC_REMAINING_PATIENTS_WARNING_THRESHOLD).to.equal(40);
+  });
+
+  it('should define DEFAULT_CGM_SAMPLE_INTERVAL', () => {
+    expect(Constants.DEFAULT_CGM_SAMPLE_INTERVAL).to.equal(5 * Constants.MS_IN_MIN);
+  });
+
+  it('should define DEFAULT_CGM_SAMPLE_INTERVAL_RANGE', () => {
+    expect(Constants.DEFAULT_CGM_SAMPLE_INTERVAL_RANGE).to.eql([Constants.DEFAULT_CGM_SAMPLE_INTERVAL, Infinity]);
+  });
+
+  it('should define ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE', () => {
+    expect(Constants.ONE_MINUTE_CGM_SAMPLE_INTERVAL_RANGE).to.eql([Constants.MS_IN_MIN, Constants.MS_IN_MIN]);
   });
 });

@@ -82,6 +82,11 @@ class BgLogChart extends Component {
 
   mountChart = (node, props = {}) => {
     this.log('Mounting...');
+
+    // When on mobile, the chart will be hidden and therefore have zero width and height.
+    // This safety check prevents an error from occurring in tideline due to the zeroes.
+    if (!node?.offsetHeight || !node?.offsetWidth) return;
+
     this.chart = chartBgLogFactory(node, props);
     this.chart.node = node;
     this.bindEvents();
@@ -89,7 +94,7 @@ class BgLogChart extends Component {
 
   unmountChart = () => {
     this.log('Unmounting...');
-    if (this.chart) this.chart.destroy();
+    if (this.chart) this.chart?.destroy();
   };
 
   remountChart = (updates = {}) => {
@@ -97,15 +102,15 @@ class BgLogChart extends Component {
     this.log('Remounting...');
     this.unmountChart();
     this.mount(chartProps);
-    this.chart.emitter.emit('inTransition', false);
+    this.chart?.emitter.emit('inTransition', false);
   }
 
   rerenderChart = (updates = {}) => {
     const chartProps = { ...this.props, ...updates };
     this.log('Rerendering...');
-    this.chart.clear();
+    this.chart?.clear();
     this.bindEvents();
-    this.chart.load(chartProps.data, chartProps.initialDatetimeLocation);
+    this.chart?.load(chartProps.data, chartProps.initialDatetimeLocation);
     if (chartProps.showingValues) {
       this.showValues();
     } else {
@@ -114,10 +119,10 @@ class BgLogChart extends Component {
   };
 
   bindEvents = () => {
-    this.chart.emitter.on('inTransition', this.props.onTransition);
-    this.chart.emitter.on('navigated', this.handleDatetimeLocationChange);
-    this.chart.emitter.on('mostRecent', this.props.onMostRecent);
-    this.chart.emitter.on('selectSMBG', this.props.onSelectSMBG);
+    this.chart?.emitter.on('inTransition', this.props.onTransition);
+    this.chart?.emitter.on('navigated', this.handleDatetimeLocationChange);
+    this.chart?.emitter.on('mostRecent', this.props.onMostRecent);
+    this.chart?.emitter.on('selectSMBG', this.props.onSelectSMBG);
   };
 
   initializeChart = (data, datetimeLocation, showingValues) => {
@@ -127,14 +132,14 @@ class BgLogChart extends Component {
     }
 
     if (datetimeLocation) {
-      this.chart.load(data, datetimeLocation);
+      this.chart?.load(data, datetimeLocation);
     }
     else {
-      this.chart.load(data);
+      this.chart?.load(data);
     }
 
     if (this.props.isClinicianAccount || showingValues) {
-      this.chart.showValues();
+      this.chart?.showValues();
     }
   };
 
@@ -150,29 +155,29 @@ class BgLogChart extends Component {
   }
 
   getCurrentDay = timePrefs => {
-    return this.chart.getCurrentDay(timePrefs).toISOString();
+    return this.chart?.getCurrentDay(timePrefs).toISOString();
   };
 
   goToMostRecent = () => {
-    this.chart.clear();
+    this.chart?.clear();
     this.bindEvents();
-    this.chart.load(this.props.data);
+    this.chart?.load(this.props.data);
   };
 
   hideValues = () => {
-    this.chart.hideValues();
+    this.chart?.hideValues();
   };
 
   panBack = () => {
-    this.chart.panBack();
+    this.chart?.panBack();
   };
 
   panForward = () => {
-    this.chart.panForward();
+    this.chart?.panForward();
   };
 
   showValues = () => {
-    this.chart.showValues();
+    this.chart?.showValues();
   };
 }
 
@@ -219,14 +224,9 @@ class BgLog extends Component {
   UNSAFE_componentWillReceiveProps = nextProps => {
     const loadingJustCompleted = this.props.loading && !nextProps.loading;
     const newDataRecieved = this.props.queryDataCount !== nextProps.queryDataCount;
-    const bgRangeUpdated = this.props.data?.bgPrefs?.useDefaultRange !== nextProps.data?.bgPrefs?.useDefaultRange;
 
     if (this.refs.chart) {
       if (loadingJustCompleted || newDataRecieved) this.refs.chart.rerenderChart({ data: nextProps.data });
-
-      if (nextProps.data?.bgPrefs?.bgClasses && bgRangeUpdated) {
-        this.refs.chart.remountChart({ bgClasses: nextProps.data.bgPrefs.bgClasses });
-      }
     }
   };
 
@@ -260,16 +260,16 @@ class BgLog extends Component {
 
     return (
       <div id="tidelineMain" className="bgLog">
-        {this.isMissingSMBG() ? this.renderMissingSMBGHeader() : this.renderHeader()}
-        <div className="container-box-outer patient-data-content-outer">
-          <div className="container-box-inner patient-data-content-inner">
-            <div className="patient-data-content">
+        <Box variant="containers.patientData">
+          {this.isMissingSMBG() ? this.renderMissingSMBGHeader() : this.renderHeader()}
+
+          <Box variant="containers.patientDataInner">
+            <Box className="patient-data-content" variant="containers.patientDataContent">
               <Loader show={!!this.refs.chart && this.props.loading} overlay={true} />
               {renderedContent}
 
               <Flex
                 mt={4}
-                mb={5}
                 pl="50px"
                 pr="30px"
                 sx={{
@@ -277,7 +277,11 @@ class BgLog extends Component {
                   justifyContent: 'space-between',
                 }}
               >
-                <Button className="btn-refresh" variant="secondary" onClick={this.props.onClickRefresh}>
+                <Button
+                  className="btn-refresh"
+                  variant="secondaryCondensed"
+                  onClick={this.props.onClickRefresh}
+                >
                   {t('Refresh')}
                 </Button>
 
@@ -297,10 +301,9 @@ class BgLog extends Component {
                   />
                 </Flex>
               </Flex>
-            </div>
-          </div>
-          <div className="container-box-inner patient-data-sidebar">
-            <div className="patient-data-sidebar-inner">
+            </Box>
+
+            <Box className="patient-data-sidebar" variant="containers.patientDataSidebar">
               <Box mb={2}>
                 <ClipboardButton
                   buttonTitle={t('For email or notes')}
@@ -323,10 +326,10 @@ class BgLog extends Component {
                 trackMetric={this.props.trackMetric}
                 updateChartPrefs={this.props.updateChartPrefs}
               />
-            </div>
-          </div>
-        </div>
-        <WindowSizeListener onResize={this.handleWindowResize} />
+            </Box>
+          </Box>
+          <WindowSizeListener onResize={this.handleWindowResize} />
+        </Box>
       </div>
     );
   };

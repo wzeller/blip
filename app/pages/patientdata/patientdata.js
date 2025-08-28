@@ -42,12 +42,10 @@ import Stats from '../../components/chart/stats';
 import { bgLog as BgLog } from '../../components/chart';
 import { settings as Settings } from '../../components/chart';
 import UploadLaunchOverlay from '../../components/uploadlaunchoverlay';
-import baseTheme, { fontWeights, borders, radii } from '../../themes/baseTheme';
-import { Body1, Title } from '../../components/elements/FontStyles';
-import DexcomLogoIcon from '../../core/icons/DexcomLogo.svg';
+import baseTheme from '../../themes/baseTheme';
+import { DesktopOnly, MobileOnly } from '../../components/mediaqueries';
 
 import Messages from '../../components/messages';
-import UploaderButton from '../../components/uploaderbutton';
 import ChartDateRangeModal from '../../components/ChartDateRangeModal';
 import ChartDateModal from '../../components/ChartDateModal';
 import PrintDateRangeModal from '../../components/PrintDateRangeModal';
@@ -55,11 +53,18 @@ import Button from '../../components/elements/Button';
 
 import ToastContext from '../../providers/ToastProvider';
 
-import { Box, Flex } from 'theme-ui';
+import { Box, Flex, Grid, Link } from 'theme-ui';
 import Checkbox from '../../components/elements/Checkbox';
 import PopoverLabel from '../../components/elements/PopoverLabel';
-import { Paragraph2 } from '../../components/elements/FontStyles';
-import { DIABETES_DATA_TYPES } from '../../core/constants';
+import { Paragraph1, Paragraph2 } from '../../components/elements/FontStyles';
+import Card from '../../components/elements/Card';
+import UploaderBanner from '../../components/elements/Card/Banners/Uploader.png';
+import ShareBanner from '../../components/elements/Card/Banners/Share.png';
+import DataConnectionsBanner from '../../components/elements/Card/Banners/DataConnections.png';
+import DataConnectionsModal from '../../components/datasources/DataConnectionsModal';
+import { DEFAULT_CGM_SAMPLE_INTERVAL, DEFAULT_CGM_SAMPLE_INTERVAL_RANGE, MS_IN_MIN } from '../../core/constants';
+const { GLYCEMIC_RANGE } = vizUtils.constants;
+
 
 const { Loader } = vizComponents;
 const { getLocalizedCeiling, getTimezoneFromTimePrefs } = vizUtils.datetime;
@@ -108,14 +113,13 @@ export const PatientDataClass = createReactClass({
     var state = {
       chartPrefs: {
         basics: {
-          stats: {
-            excludeDaysWithoutBolus: false,
-          },
+          stats: {},
           sections: {},
           extentSize: 14,
         },
         daily: {
           extentSize: 1,
+          cgmSampleIntervalRange: DEFAULT_CGM_SAMPLE_INTERVAL_RANGE,
         },
         trends: {
           activeDays: {
@@ -179,7 +183,7 @@ export const PatientDataClass = createReactClass({
       createMessage: null,
       createMessageDatetime: null,
       datetimeLocation: null,
-      fetchEarlierDataCount: 0,
+      fetchAdditionalDataCount: 0,
       loading: true,
       transitioningChartType: false,
       timePrefs: {},
@@ -241,135 +245,146 @@ export const PatientDataClass = createReactClass({
         inTransition={false}
         atMostRecent={false}
         title={headerTitle}
-        ref="header" />
-      );
+        ref="header"
+      />
+    );
   },
 
   renderInitialLoading: function() {
-    var header = this.renderEmptyHeader();
     return (
-      <div>
-        {header}
-        <div className="container-box-outer patient-data-content-outer">
-          <div className="container-box-inner patient-data-content-inner">
-            <div className="patient-data-content"></div>
-          </div>
-        </div>
-      </div>
+      <Box variant="containers.patientData">
+        {this.renderEmptyHeader()}
+        <Box
+          variant="containers.patientDataInner"
+          sx={{ minHeight: ['70vh !important', '70vh !important', '40vh !important'] }} />
+      </Box>
     );
   },
 
   renderNoData: function() {
-    const { t } = this.props;
-    var content = t('{{patientName}} does not have any data yet.', {patientName: personUtils.patientFullName(this.props.patient)});
-    var header = this.renderEmptyHeader('No Data Available');
-    var uploadLaunchOverlay = this.state.showUploadOverlay ? this.renderUploadOverlay() : null;
+    const { t, currentPatientInViewId, isUserPatient, selectedClinicId } = this.props;
+    const uploadLaunchOverlay = this.state.showUploadOverlay ? this.renderUploadOverlay() : null;
+    const dataConnectionsModal = this.state.showDataConnectionsModal ? this.renderDataConnectionsModal() : null;
 
-    var self = this;
-    var handleClickUpload = function() {
-      self.props.trackMetric('Clicked No Data Upload');
-    };
-    var handleClickBlipNotes = function() {
-      self.props.trackMetric('Clicked No Data Get Blip Notes');
-    };
-    var handleClickDexcomConnect = function() {
-      self.props.trackMetric('Clicked No Data Connect Dexcom');
-      self.props.history.push(`/patients/${self.props.currentPatientInViewId}/profile?dexcomConnect=patient-empty-data`);
-    };
-    var handleClickLaunch = function(e) {
+    const self = this;
+
+    const handleClickUpload = function(e) {
       if (e) {
         e.preventDefault();
         e.stopPropagation();
       }
+
+      const properties = { patientID: currentPatientInViewId };
+      if (selectedClinicId) properties.clinicId = selectedClinicId;
+      self.props.trackMetric('Clicked No Data Upload Card', properties);
       self.setState({showUploadOverlay: true});
       launchCustomProtocol('tidepoolupload://open');
-    }
+    };
 
-    if (this.props.isUserPatient) {
-      content = (
-        <Trans className="patient-data-uploader-message" i18nKey="html.patientdata-uploaded-message">
-            <Box
-              variant="containers.smallBordered"
-              py={[3, 5, 6]}
-              px={[2, 3]}
-              sx={{
-                borderTop: ['none', borders.default],
-                borderBottom: ['none', borders.default],
-              }}
-            >
-              <Title mb={3} fontSize={3} sx={{ fontWeight: fontWeights.medium }}>To upload your data, install Tidepool Uploader</Title>
+    const handleClickDataConnections = function() {
+      const properties = { patientID: currentPatientInViewId };
+      if (selectedClinicId) properties.clinicId = selectedClinicId;
+      self.props.trackMetric('Clicked No Data Data Connections Card', properties);
+      self.setState({showDataConnectionsModal: true});
+    };
 
-              <UploaderButton
-                onClick={handleClickUpload}
-                buttonText={t('Get the Tidepool Uploader')}
-              />
-
-              <Body1 color="mediumGrey" fontWeight={fontWeights.medium} mt={3} mb={6}>
-                If you already have Tidepool Uploader, launch it <a className="uploader-color-override" href='' onClick={handleClickLaunch} title="Upload data">here</a>
-              </Body1>
-
-              <Flex
-                py={1}
-                px={1}
-                mb={4}
-                sx={{
-                  alignItems: 'center',
-                  gap: 9,
-                  display: 'inline-flex !important',
-                  border: borders.input,
-                  borderRadius: radii.large,
-                }}
-              >
-                <Body1 ml={2} color="mediumGrey" fontWeight={fontWeights.medium}>
-                  Sync CGM Data
-                </Body1>
-
-                <Button
-                  id='dexcom-connect-link'
-                  variant="textPrimary"
-                  color="brand.dexcom"
-                  iconSrc={DexcomLogoIcon}
-                  label={t('Connect with Dexcom')}
-                  pr={0}
-                  sx={{
-                    fontWeight: 'medium',
-                    '&:hover': { color: 'brand.dexcom' },
-                    '.icon': { top: '-2px', left: '-2px' },
-                  }}
-                  onClick={handleClickDexcomConnect}
-                >
-                  Connect With
-                </Button>
-              </Flex>
-            </Box>
-
-            <p className="patient-no-data-help">
-              Already uploaded? <a href="" className="uploader-color-override" onClick={this.handleClickNoDataRefresh}>Click to reload.</a><br />
-              <b>Need help?</b> Email us at <a className="uploader-color-override" href="mailto:support@tidepool.org">support@tidepool.org</a> or visit our <a className="uploader-color-override" href="http://support.tidepool.org/">help page</a>.
-            </p>
-          </Trans>
-      );
-    }
+    const handleShare = function() {
+      self.props.history.push(`/patients/${self.props.currentPatientInViewId}/share`);
+    };
 
     return (
-      <div>
-        {header}
-        <div className="container-box-outer patient-data-content-outer">
-          <div className="container-box-inner patient-data-content-inner">
-            <div className="patient-data-content">
-              <div className="patient-data-message-no-data">
-                {content}
-              </div>
-            </div>
-          </div>
-        </div>
+      <Box variant="containers.patientData" className='no-data'>
+        {this.renderEmptyHeader(t('Welcome'))}
+
+        <Box variant="containers.patientDataInner">
+          <Flex
+            className="patient-data-content"
+            variant="containers.patientDataContent"
+            sx={{ flexDirection: 'column' }}
+          >
+            <Grid
+              mb={4}
+              columns={['1fr', '1fr', '1fr 1fr']}
+              sx={{ gap: 3 }}
+            >
+              <Box>
+                <Card
+                  id='data-connections-card'
+                  title={t('Connect a Device Account')}
+                  subtitle={isUserPatient
+                    ? t('Do you have a Dexcom, FreeStyle Libre, or twiist account? When you connect an account, data can flow into Tidepool without any extra effort.')
+                    : t('Does your patient have a Dexcom, FreeStyle Libre, or twiist account? Automatically sync data from these accounts with the patient\'s permission.')
+                  }
+                  bannerImage={DataConnectionsBanner}
+                  onClick={handleClickDataConnections}
+                />
+              </Box>
+              <DesktopOnly>
+                <Card
+                  id='uploader-card'
+                  title={t('Upload Data Directly with Tidepool Uploader')}
+                  subtitle={t('Tidepool Uploader supports over 85 devices. Download Tidepool Uploader to get started.')}
+                  bannerImage={UploaderBanner}
+                  onClick={handleClickUpload}
+                />
+              </DesktopOnly>
+              <MobileOnly>
+                <Card
+                  id='share-card'
+                  title={t('Share Your Data')}
+                  subtitle={t('Share your data with another person (Email) or your Clinician (Share Code). You can remove their access at any time.')}
+                  bannerImage={ShareBanner}
+                  onClick={handleShare}
+                />
+              </MobileOnly>
+            </Grid>
+
+            <Flex
+              sx={{
+                flexDirection: 'column',
+                justifyContent: ['flex-start', 'space-between'],
+                flexGrow: 1,
+                textAlign: 'center',
+              }}
+            >
+              <Trans>
+                <Paragraph1 mb="0.5em" sx={{ fontWeight: 'medium' }}>
+                  Already uploaded? <Link href="" className="uploader-color-override" onClick={this.handleClickNoDataRefresh}>Click to reload.</Link>
+                </Paragraph1>
+
+                <Paragraph1 sx={{ fontWeight: 'medium' }}>
+                  Need help? Email us at <Link className="uploader-color-override" href="mailto:support@tidepool.org">support@tidepool.org</Link> or visit our <Link className="uploader-color-override" href="http://support.tidepool.org/">help page</Link>.
+                </Paragraph1>
+              </Trans>
+
+              <Button
+                variant="secondaryCondensed"
+                onClick={this.handleClickNoDataRefresh}
+                mt={4}
+                sx={{ width: 'fit-content', alignSelf: ['center', null, 'flex-start'] }}
+              >
+                {t('Refresh')}
+              </Button>
+            </Flex>
+          </Flex>
+        </Box>
+
         {uploadLaunchOverlay}
-      </div>
+        {dataConnectionsModal}
+      </Box>
     );
   },
 
   renderUploadOverlay: function() {
-    return <UploadLaunchOverlay modalDismissHandler={()=>{this.setState({showUploadOverlay: false})}}/>
+    return <UploadLaunchOverlay modalDismissHandler={()=>{this.setState({ showUploadOverlay: false })}}/>
+  },
+
+  renderDataConnectionsModal: function() {
+    return <DataConnectionsModal
+      open
+      patient={this.props.clinicPatient || this.props.patient}
+      onClose={() => this.setState({ showDataConnectionsModal: false })}
+    />
   },
 
   renderDatesDialog: function() {
@@ -396,7 +411,7 @@ export const PatientDataClass = createReactClass({
           // Determine the earliest startDate needed to fetch data to.
           const startDate = moment.utc(dates[0]).tz(getTimezoneFromTimePrefs(this.state.timePrefs)).toISOString();
           const endDate = moment.utc(dates[1]).tz(getTimezoneFromTimePrefs(this.state.timePrefs)).toISOString();
-          const fetchedUntil = _.get(this.props, 'data.fetchedUntil');
+          const fetchedUntil = this.getCurrentFetchedUntilDate();
 
           const updateOpts = {
             showLoading: true,
@@ -406,7 +421,7 @@ export const PatientDataClass = createReactClass({
           if (startDate < fetchedUntil) {
             this.setState({ datesDialogFetchingData: true });
 
-            this.fetchEarlierData({
+            this.fetchAdditionalData({
               returnData: false,
               showLoading: true,
               startDate,
@@ -450,13 +465,13 @@ export const PatientDataClass = createReactClass({
           // Determine the earliest startDate needed to fetch data to.
           const enabledOpts = _.filter(opts, { disabled: false });
           const earliestPrintDate = _.min(_.at(enabledOpts, _.map(_.keys(enabledOpts), key => `${key}.endpoints.0`)));
-          const startDate = moment.utc(earliestPrintDate).tz(getTimezoneFromTimePrefs(this.state.timePrefs)).toISOString()
-          const fetchedUntil = _.get(this.props, 'data.fetchedUntil');
+          const startDate = moment.utc(earliestPrintDate).tz(getTimezoneFromTimePrefs(this.state.timePrefs)).toISOString();
+          const fetchedUntil = this.getCurrentFetchedUntilDate();
 
           let setStateCallback = this.generatePDF;
 
           if (startDate < fetchedUntil) {
-            this.fetchEarlierData({
+            this.fetchAdditionalData({
               returnData: false,
               showLoading: false,
               startDate,
@@ -507,18 +522,20 @@ export const PatientDataClass = createReactClass({
             currentPatientInViewId={this.props.currentPatientInViewId}
             data={this.props.data}
             patient={this.props.patient}
+            clinicPatient={this.props.clinicPatient}
+            isUserPatient={this.props.isUserPatient}
             onClickRefresh={this.handleClickRefresh}
             onClickNoDataRefresh={this.handleClickNoDataRefresh}
-            onSwitchToBasics={this.handleSwitchToBasics}
-            onSwitchToDaily={this.handleSwitchToDaily}
-            onSwitchToTrends={this.handleSwitchToTrends}
-            onSwitchToSettings={this.handleSwitchToSettings}
-            onSwitchToBgLog={this.handleSwitchToBgLog}
+            onSwitchToBasics={this.handleSwitchToBasicsRoute}
+            onSwitchToDaily={this.handleSwitchToDailyRoute}
+            onSwitchToTrends={this.handleSwitchToTrendsRoute}
+            onSwitchToSettings={this.handleSwitchToSettingsRoute}
+            onSwitchToBgLog={this.handleSwitchToBgLogRoute}
             onClickPrint={this.handleClickPrint}
             trackMetric={this.props.trackMetric}
             updateChartPrefs={this.updateChartPrefs}
             uploadUrl={this.props.uploadUrl}
-            ref="tideline" />
+          />
         </div>
       </div>
     );
@@ -550,12 +567,7 @@ export const PatientDataClass = createReactClass({
             loading={this.state.loading}
             onClickRefresh={this.handleClickRefresh}
             onClickNoDataRefresh={this.handleClickNoDataRefresh}
-            onSwitchToBasics={this.handleSwitchToBasics}
-            onSwitchToDaily={this.handleSwitchToDaily}
             onClickPrint={this.handleClickPrint}
-            onSwitchToTrends={this.handleSwitchToTrends}
-            onSwitchToSettings={this.handleSwitchToSettings}
-            onSwitchToBgLog={this.handleSwitchToBgLog}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             onClickChartDates={this.handleClickChartDates}
             patient={this.props.patient}
@@ -566,8 +578,13 @@ export const PatientDataClass = createReactClass({
             trackMetric={this.props.trackMetric}
             updateChartPrefs={this.updateChartPrefs}
             uploadUrl={this.props.uploadUrl}
-            ref="tideline"
-            removeGeneratedPDFS={this.props.removeGeneratedPDFS} />
+            removeGeneratedPDFS={this.props.removeGeneratedPDFS}
+            onSwitchToTrends={this.handleSwitchToTrendsRoute}
+            onSwitchToSettings={this.handleSwitchToSettingsRoute}
+            onSwitchToBgLog={this.handleSwitchToBgLogRoute}
+            onSwitchToBasics={this.handleSwitchToBasicsRoute}
+            onSwitchToDaily={this.handleSwitchToDailyRoute}
+            />
           );
       case 'daily':
         return (
@@ -581,12 +598,7 @@ export const PatientDataClass = createReactClass({
             onClickRefresh={this.handleClickRefresh}
             onCreateMessage={this.handleShowMessageCreation}
             onShowMessageThread={this.handleShowMessageThread}
-            onSwitchToBasics={this.handleSwitchToBasics}
-            onSwitchToDaily={this.handleSwitchToDaily}
             onClickPrint={this.handleClickPrint}
-            onSwitchToTrends={this.handleSwitchToTrends}
-            onSwitchToSettings={this.handleSwitchToSettings}
-            onSwitchToBgLog={this.handleSwitchToBgLog}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             onClickChartDates={this.handleClickChartDates}
             patient={this.props.patient}
@@ -596,8 +608,13 @@ export const PatientDataClass = createReactClass({
             updatingDatum={this.props.updatingDatum}
             queryDataCount={this.getMetaData('queryDataCount')}
             key={this.state.chartKey}
-            ref="tideline"
-            removeGeneratedPDFS={this.props.removeGeneratedPDFS} />
+            removeGeneratedPDFS={this.props.removeGeneratedPDFS}
+            onSwitchToTrends={this.handleSwitchToTrendsRoute}
+            onSwitchToSettings={this.handleSwitchToSettingsRoute}
+            onSwitchToBgLog={this.handleSwitchToBgLogRoute}
+            onSwitchToBasics={this.handleSwitchToBasicsRoute}
+            onSwitchToDaily={this.handleSwitchToDailyRoute}
+            />
           );
       case 'trends':
         return (
@@ -611,11 +628,6 @@ export const PatientDataClass = createReactClass({
             mostRecentDatetimeLocation={this.state.mostRecentDatetimeLocation}
             onClickRefresh={this.handleClickRefresh}
             onClickPrint={this.handleClickPrint}
-            onSwitchToBasics={this.handleSwitchToBasics}
-            onSwitchToDaily={this.handleSwitchToDaily}
-            onSwitchToTrends={this.handleSwitchToTrends}
-            onSwitchToSettings={this.handleSwitchToSettings}
-            onSwitchToBgLog={this.handleSwitchToBgLog}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             patient={this.props.patient}
             stats={stats}
@@ -624,8 +636,13 @@ export const PatientDataClass = createReactClass({
             uploadUrl={this.props.uploadUrl}
             queryDataCount={this.getMetaData('queryDataCount')}
             key={this.state.chartKey}
-            ref="tideline"
-            removeGeneratedPDFS={this.props.removeGeneratedPDFS} />
+            removeGeneratedPDFS={this.props.removeGeneratedPDFS}
+            onSwitchToTrends={this.handleSwitchToTrendsRoute}
+            onSwitchToSettings={this.handleSwitchToSettingsRoute}
+            onSwitchToBgLog={this.handleSwitchToBgLogRoute}
+            onSwitchToBasics={this.handleSwitchToBasicsRoute}
+            onSwitchToDaily={this.handleSwitchToDailyRoute}
+            />
           );
       case 'bgLog':
         return (
@@ -640,11 +657,6 @@ export const PatientDataClass = createReactClass({
             onClickRefresh={this.handleClickRefresh}
             onClickNoDataRefresh={this.handleClickNoDataRefresh}
             onClickPrint={this.handleClickPrint}
-            onSwitchToBasics={this.handleSwitchToBasics}
-            onSwitchToDaily={this.handleSwitchToDaily}
-            onSwitchToTrends={this.handleSwitchToTrends}
-            onSwitchToSettings={this.handleSwitchToSettings}
-            onSwitchToBgLog={this.handleSwitchToBgLog}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             patient={this.props.patient}
             stats={stats}
@@ -653,48 +665,17 @@ export const PatientDataClass = createReactClass({
             uploadUrl={this.props.uploadUrl}
             queryDataCount={this.getMetaData('queryDataCount')}
             key={this.state.chartKey}
-            ref="tideline"
-            removeGeneratedPDFS={this.props.removeGeneratedPDFS} />
+            removeGeneratedPDFS={this.props.removeGeneratedPDFS}
+            onSwitchToTrends={this.handleSwitchToTrendsRoute}
+            onSwitchToSettings={this.handleSwitchToSettingsRoute}
+            onSwitchToBgLog={this.handleSwitchToBgLogRoute}
+            onSwitchToBasics={this.handleSwitchToBasicsRoute}
+            onSwitchToDaily={this.handleSwitchToDailyRoute}
+            />
           );
       case 'settings':
         return this.renderSettings();
     }
-  },
-
-  renderDefaultBgRangeCheckbox: function(props, state) {
-    const { t } = props;
-
-    return (
-      <Box p={2} sx={{
-        borderTop: '1px solid',
-        borderColor: 'grays.1',
-      }}>
-        <PopoverLabel
-          id="use-default-bg-range"
-          label={(
-            <Checkbox
-              checked={!!this.state.bgPrefs?.useDefaultRange}
-              label={t('Use default BG ranges')}
-              onChange={this.toggleDefaultBgRange}
-              themeProps={{
-                mb: 0,
-                sx: { color: 'stat.text' },
-              }}
-            />
-          )}
-          popoverContent={(
-            <Box p={3}>
-              <Paragraph2>
-                <strong>{t('This patient has set a custom BG target range.')}</strong>
-              </Paragraph2>
-              <Paragraph2>
-                {t('If this option is checked, the target ranges for this view will be updated to the default ranges.')}
-              </Paragraph2>
-            </Box>
-          )}
-        />
-      </Box>
-    );
   },
 
   renderExcludeEmptyBolusDaysCheckbox: function(props, state) {
@@ -770,36 +751,6 @@ export const PatientDataClass = createReactClass({
     this.updateChartPrefs(prefs, false, true, true);
   },
 
-  toggleDefaultBgRange: function(e, value) {
-    if (e) {
-      e.preventDefault();
-    }
-
-    const patientSettings = _.get(this.props, 'patient.settings', {});
-    let bgPrefs = this.state.bgPrefs || {};
-
-    const bgUnitsOverride = {
-      units: this.props.queryParams?.units || this.props.clinic?.preferredBgUnits,
-      source: this.props.queryParams?.units ? 'query params' : 'preferred clinic units',
-    };
-
-    if (!bgPrefs.useDefaultRange) {
-      bgPrefs = utils.getBGPrefsForDataProcessing({ ...patientSettings, bgTarget: undefined }, bgUnitsOverride);
-      bgPrefs.bgBounds = vizUtils.bg.reshapeBgClassesToBgBounds(bgPrefs);
-      bgPrefs.useDefaultRange = true;
-    } else {
-      bgPrefs = utils.getBGPrefsForDataProcessing(patientSettings, bgUnitsOverride);
-      bgPrefs.bgBounds = vizUtils.bg.reshapeBgClassesToBgBounds(bgPrefs);
-      bgPrefs.useDefaultRange = false;
-    }
-
-    if (bgPrefs.useDefaultRange) this.props.trackMetric(`${_.capitalize(this.state.chartType)} - use default BG range`);
-
-    this.setState({ bgPrefs }, () => {
-      this.updateChartPrefs({}, false, true, true);
-    });
-  },
-
   closeDatesDialog: function() {
     this.setState({
       datesDialogOpen: false,
@@ -817,13 +768,11 @@ export const PatientDataClass = createReactClass({
 
   closeMessageThread: function(){
     this.props.onCloseMessageThread();
-    this.refs.tideline.closeMessageThread();
     this.props.trackMetric('Closed Message Thread Modal');
   },
 
   closeMessageCreation: function(){
     this.setState({ createMessageDatetime: null });
-    this.refs.tideline.closeMessageThread();
     this.props.trackMetric('Closed New Message Modal');
   },
 
@@ -847,10 +796,6 @@ export const PatientDataClass = createReactClass({
         bgPrefs,
         manufacturer,
       });
-
-      if (this.state.isCustomBgRange && !props.isUserPatient && _.includes(['timeInRange', 'readingsInRange'], statType)) {
-        stat.children = this.renderDefaultBgRangeCheckbox(props, state);
-      }
 
       if (statType === 'totalInsulin' && _.includes(['basics', 'trends'], chartType)) {
         // We nest the averageDailyDose stat within the totalInsulin stat
@@ -898,7 +843,7 @@ export const PatientDataClass = createReactClass({
           </Box>
         );
 
-        if (daysWithBoluses > 0 && daysWithBoluses < activeDays) {
+        if (state.chartType !== 'basics' && daysWithBoluses > 0 && daysWithBoluses < activeDays) {
           // If any of the calendar dates within the range are missing boluses,
           // present a checkbox to disable them from insulin stat calculations
           stat.children = (
@@ -967,7 +912,12 @@ export const PatientDataClass = createReactClass({
     const patientSettings = _.get(props, 'patient.settings', {});
     const printDialogPDFOpts = state.printDialogPDFOpts || {};
     const siteChangeSource = state.updatedSiteChangeSource || _.get(props, 'patient.settings.siteChangeSource');
-    const pdfPatient = _.assign({}, props.patient, {
+    const combinedPatient = props.clinicPatient ? personUtils.combinedAccountAndClinicPatient(props.patient, props.clinicPatient) : null;
+    const sourcePatient = personUtils.isClinicianAccount(props.user) && !!combinedPatient ? combinedPatient : props.patient;
+
+    const glycemicRanges = props.clinicPatient?.glycemicRanges || GLYCEMIC_RANGE.ADA_STANDARD;
+
+    const pdfPatient = _.assign({}, sourcePatient, {
       settings: _.assign({}, patientSettings, { siteChangeSource }),
     });
 
@@ -986,7 +936,7 @@ export const PatientDataClass = createReactClass({
         aggregationsByDate: 'basals, boluses, fingersticks, siteChanges',
         bgSource: _.get(state.chartPrefs, 'basics.bgSource'),
         stats: this.getStatsByChartType('basics'),
-        excludeDaysWithoutBolus: _.get(state, 'chartPrefs.basics.stats.excludeDaysWithoutBolus'),
+        excludeDaysWithoutBolus: false, // deprecated for basics chartType
         ...commonQueries,
       };
     }
@@ -1018,6 +968,7 @@ export const PatientDataClass = createReactClass({
           wizard: {},
         },
         bgSource: _.get(state.chartPrefs, 'daily.bgSource'),
+        cgmSampleIntervalRange: _.get(state.chartPrefs, 'daily.cgmSampleIntervalRange'),
         ...commonQueries,
       };
     }
@@ -1029,6 +980,7 @@ export const PatientDataClass = createReactClass({
         bgSource: _.get(state.chartPrefs, 'agpBGM.bgSource'),
         stats: this.getStatsByChartType('agpBGM'),
         types: { smbg: {} },
+        glycemicRanges,
         ...commonQueries,
       };
     }
@@ -1040,6 +992,7 @@ export const PatientDataClass = createReactClass({
         bgSource: _.get(state.chartPrefs, 'agpCGM.bgSource'),
         stats: this.getStatsByChartType('agpCGM'),
         types: { cbg: {} },
+        glycemicRanges,
         ...commonQueries,
       };
     }
@@ -1093,7 +1046,7 @@ export const PatientDataClass = createReactClass({
     const prevLimitReached = newEndpoints[0] <= prevEndpoints[0];
     const nextLimitReached = newEndpoints[1] >= nextEndpoints[1];
     const updateChartData = forceChartDataUpdate || (!isOnMostRecentDay && (prevLimitReached || nextLimitReached));
-    const fetchedUntil = _.get(this.props, 'data.fetchedUntil');
+    const fetchedUntil = this.getCurrentFetchedUntilDate();
     const newChartRangeNeedsDataFetch = moment.utc(newEndpoints[0]).subtract(nextDays, 'days').startOf('day').toISOString() <= fetchedUntil;
 
     const updateOpts = {
@@ -1113,10 +1066,28 @@ export const PatientDataClass = createReactClass({
         returnData: false,
       };
 
-      this.fetchEarlierData(options);
+      this.fetchAdditionalData(options);
     }
 
     this.updateChart(this.state.chartType, datetimeLocation, newEndpoints, updateOpts);
+  },
+
+  handleCgmSampleIntervalRangeUpdate: function(cgmSampleIntervalRange) {
+    if (cgmSampleIntervalRange?.[0] === DEFAULT_CGM_SAMPLE_INTERVAL) return;
+
+    const fetchedUntil = this.getCurrentFetchedUntilDate();
+    const currentChartStartEndpoint = _.get(this.state, 'chartEndpoints.current.0', 0);
+    const newCgmSampleIntervalRangeNeedsDataFetch = !fetchedUntil || moment.utc(fetchedUntil).valueOf() > currentChartStartEndpoint;
+
+    if (!this.props.fetchingPatientData && newCgmSampleIntervalRangeNeedsDataFetch) {
+      const options = {
+        showLoading: true,
+        returnData: false,
+        type: 'cbg',
+      };
+
+      this.fetchAdditionalData(options);
+    }
   },
 
   handleMessageCreation: function(message) {
@@ -1150,6 +1121,111 @@ export const PatientDataClass = createReactClass({
     this.props.trackMetric('Clicked Message Pool Background');
   },
 
+  handleRouteChangeEvent: function(nextProps) {
+    const chartTypeFromPath = nextProps.match?.params?.chartType;
+    const targetDate = utils.parseDatetimeParamToInteger(nextProps.queryParams?.datetime);
+
+    // If the chart was previously refreshed on settings, we need to refetch the data, since the refresh
+    // would have only fetched the pump settings history, and not all the data we need to render other charts.
+    const needsDataRefetch = this.state.refreshChartType === 'settings' && _.includes([
+      'basics',
+      'daily',
+      'trends',
+      'bgLog',
+    ], chartTypeFromPath);
+
+    if (needsDataRefetch) {
+      this.setState({
+        chartType: chartTypeFromPath,
+      }, () => {
+        this.handleRefresh();
+      });
+
+      return;
+    }
+
+    switch(true) {
+      // If the chart is explicitly specified in the URL, we switch to that chart type.
+      case chartTypeFromPath === 'settings':
+        this.handleSwitchToSettings();
+        break;
+      case chartTypeFromPath === 'basics':
+        this.handleSwitchToBasics();
+        break;
+      case chartTypeFromPath === 'daily':
+        this.handleSwitchToDaily(targetDate);
+        break;
+      case chartTypeFromPath === 'trends':
+        this.handleSwitchToTrends(targetDate);
+        break;
+      case chartTypeFromPath === 'bgLog':
+        this.handleSwitchToBgLog(targetDate);
+        break;
+
+      // If the chart is not specified in the URL, we should switch to the patient's default chart type,
+      // which is derived from the patient's data values. If state.defaultChartTypeForPatient
+      // exists, we should use its value rather than deriving it again using setInitialChartView().
+      case this.state.defaultChartTypeForPatient === 'basics':
+        this.handleSwitchToBasics();
+        break;
+      case this.state.defaultChartTypeForPatient === 'daily':
+        this.handleSwitchToDaily(targetDate);
+        break;
+      case this.state.defaultChartTypeForPatient === 'trends':
+        this.handleSwitchToTrends(targetDate);
+        break;
+      case this.state.defaultChartTypeForPatient === 'bgLog':
+        this.handleSwitchToBgLog(targetDate);
+        break;
+
+      // At this point, there is insufficient information; we need to call setInitialChartView() to derive
+      // the default chart type for this patient
+      default:
+        this.setInitialChartView(nextProps);
+        break;
+    }
+  },
+
+  handleSwitchToBasicsRoute: function(e) {
+    e?.preventDefault();
+    this.props.history.push(`/patients/${this.props.currentPatientInViewId}/data/basics`);
+  },
+
+  handleSwitchToDailyRoute: function(isoOrUnixTimestamp) {
+    // Arg may be ISO or unix timestamp due to variability in underlying components
+    const datetime = utils.parseDatetimeParamToInteger(isoOrUnixTimestamp);
+    let path = `/patients/${this.props.currentPatientInViewId}/data/daily`;
+
+    if (datetime) path += `?datetime=${datetime}`;
+
+    this.props.history.push(path);
+  },
+
+  handleSwitchToTrendsRoute: function(isoOrUnixTimestamp) {
+    // Arg may be ISO or unix timestamp due to variability in underlying components
+    const datetime = utils.parseDatetimeParamToInteger(isoOrUnixTimestamp);
+    let path = `/patients/${this.props.currentPatientInViewId}/data/trends`;
+
+    if (datetime) path += `?datetime=${datetime}`;
+
+    this.props.history.push(path);
+  },
+
+  handleSwitchToBgLogRoute: function(isoOrUnixTimestamp) {
+    // Arg may be ISO or unix timestamp due to variability in underlying components
+    const datetime = utils.parseDatetimeParamToInteger(isoOrUnixTimestamp);
+    let path = `/patients/${this.props.currentPatientInViewId}/data/bgLog`;
+
+    if (datetime) path += `?datetime=${datetime}`;
+
+    this.props.history.push(path);
+  },
+
+  handleSwitchToSettingsRoute: function(e) {
+    e?.preventDefault();
+    this.props.history.push(`/patients/${this.props.currentPatientInViewId}/data/settings`);
+  },
+
   handleSwitchToBasics: function(e) {
     this.props.trackMetric('Clicked Switch To Basics', {
       fromChart: this.state.chartType
@@ -1172,11 +1248,7 @@ export const PatientDataClass = createReactClass({
     this.updateChart(chartType, datetimeLocation, this.getChartEndpoints(datetimeLocation, { chartType }), updateOpts);
   },
 
-  handleSwitchToDaily: function(datetime, title) {
-    if (title) this.props.trackMetric(`Clicked Basics ${title} calendar`, {
-      fromChart: this.state.chartType
-    });
-
+  handleSwitchToDaily: function(datetime) {
     const chartType = 'daily';
 
     const getDatetimeLocation = d => moment.utc(d.valueOf())
@@ -1251,7 +1323,7 @@ export const PatientDataClass = createReactClass({
       e.preventDefault();
     }
 
-    this.fetchEarlierData({
+    this.fetchAdditionalData({
       returnData: false,
       showLoading: true,
       noDates: true,
@@ -1332,10 +1404,14 @@ export const PatientDataClass = createReactClass({
       ...updates,
     };
 
+    const cgmSampleIntervalRangeUpdated = !_.isEqual(this.state.chartPrefs.daily.cgmSampleIntervalRange, newPrefs.daily.cgmSampleIntervalRange);
+
     this.setState({
       chartPrefs: newPrefs,
     }, () => {
-      const queryOpts = { showLoading: false };
+      const queryOpts = { showLoading: cgmSampleIntervalRangeUpdated };
+
+      if (cgmSampleIntervalRangeUpdated) this.handleCgmSampleIntervalRangeUpdate(newPrefs.daily.cgmSampleIntervalRange);
 
       if (queryData) {
         this.queryData(undefined, queryOpts);
@@ -1373,6 +1449,12 @@ export const PatientDataClass = createReactClass({
 
   getCurrentData: function(path, emptyValue = {}) {
     return _.get(this.props, `data.data.current.${path}`, emptyValue);
+  },
+
+  getCurrentFetchedUntilDate: function() {
+    return this.state.chartPrefs.daily.cgmSampleIntervalRange?.[0] === MS_IN_MIN
+      ? _.get(this.props, 'data.oneMinCgmFetchedUntil') || moment.utc().toISOString()
+      : _.get(this.props, 'data.fetchedUntil');
   },
 
   getMetaData: function(path, emptyValue = {}, props = this.props) {
@@ -1670,6 +1752,7 @@ export const PatientDataClass = createReactClass({
     const userId = this.props.currentPatientInViewId;
     const patientData = _.get(nextProps, 'data.metaData.patientId') === userId;
     const patientSettings = _.get(nextProps, ['patient', 'settings'], null);
+    const clinicPatient = _.get(nextProps.clinics, [nextProps.clinic?.id, 'patients', userId], {});
 
     // Handle data refresh
     if (this.props.removingData.inProgress && nextProps.removingData.completed) {
@@ -1686,6 +1769,13 @@ export const PatientDataClass = createReactClass({
         }, () => {
           this.props.onRefresh(this.props.currentPatientInViewId, this.state.refreshChartType);
           this.props.removeGeneratedPDFS();
+
+          // Reset the path without the datetime query param if present. This will ensure that the
+          // chart gets set to to the date of the most recent datum when the new data loads
+          if (nextProps.queryParams?.datetime) {
+            const path = `/patients/${this.props.currentPatientInViewId}/data/${this.state.refreshChartType}`;
+            this.props.history.push(path);
+          }
         });
       });
     }
@@ -1704,8 +1794,9 @@ export const PatientDataClass = createReactClass({
           source: nextProps.queryParams?.units ? 'query params' : 'preferred clinic units',
         };
 
-        bgPrefs = utils.getBGPrefsForDataProcessing(patientSettings, bgUnitsOverride);
+        bgPrefs = utils.getBGPrefsForDataProcessing(patientSettings, clinicPatient, bgUnitsOverride);
         bgPrefs.bgBounds = vizUtils.bg.reshapeBgClassesToBgBounds(bgPrefs);
+
         if (isCustomBgRange(bgPrefs)) stateUpdates.isCustomBgRange = true;
         stateUpdates.bgPrefs = bgPrefs;
       }
@@ -1739,10 +1830,16 @@ export const PatientDataClass = createReactClass({
 
         // With initial query for upload data completed, set the initial chart type
         if (!this.state.chartType) {
-          this.setInitialChartView(nextProps);
+          const { defaultChartTypeForPatient } = this.setInitialChartView(nextProps);
+          stateUpdates.defaultChartTypeForPatient = defaultChartTypeForPatient; // cache value for future route changes
+
           window.patientData = 'No patient data has been loaded yet. Run `window.loadPatientData()` to popuplate this.'
           window.loadPatientData = this.saveDataToDestination.bind(this, 'window');
           window.downloadPatientData = this.saveDataToDestination.bind(this, 'download');
+
+        // If the route has changed, we need to update the chartType
+        } else if (this.props.location.pathname !== nextProps.location.pathname) {
+          this.handleRouteChangeEvent(nextProps);
         }
 
         // Only update the chartEndpoints and transitioningChartType state immediately after querying
@@ -1771,9 +1868,18 @@ export const PatientDataClass = createReactClass({
         }
 
         stateUpdateCallback = () => {
-          if (!nextProps.addingData.inProgress && !this.props.addingData.inProgress && !nextProps.fetchingPatientData && !this.props.fetchingPatientData) {
-            this.hideLoading(hideLoadingTimeout);
-          }
+          if (this.state.fetchingAdditionalData) {
+            // If data fetching is fully completed, we can set the fetchingAdditionalData state to false
+            if (!this.props.fetchingPatientData && !nextProps.fetchingPatientData) {
+              this.setState({ fetchingAdditionalData: false });
+            }
+          } else if (
+              // We are no longer fetching data. If the new data has been added, we can hide the loading indicator
+              !nextProps.addingData.inProgress &&
+              !this.props.addingData.inProgress
+            ) {
+              this.hideLoading(hideLoadingTimeout);
+            }
         };
       }
 
@@ -1940,6 +2046,7 @@ export const PatientDataClass = createReactClass({
             wizard: {},
           };
 
+          chartQuery.cgmSampleIntervalRange = _.get(this.state.chartPrefs, 'daily.cgmSampleIntervalRange');
           chartQuery.fillData = { adjustForDSTChanges: true };
           break;
 
@@ -1982,18 +2089,18 @@ export const PatientDataClass = createReactClass({
     }
   },
 
-  deriveChartTypeFromLatestData: function(latestData, uploads) {
+  deriveChartTypeFromLatestData: function(latestDatum, latestDiabetesDatum, uploads) {
     let chartType = 'basics'; // Default to 'basics'
 
-    if (latestData && uploads) {
+    if (latestDatum && uploads) {
       // Ideally, we determine the default view based on the device type
       // so that, for instance, if the latest data type is cgm, but comes from
       // an insulin-pump, we still direct them to the basics view
       const deviceMap = _.keyBy(uploads, 'deviceId');
-      const latestDataDevice = deviceMap[latestData.deviceId];
+      const latestDataDevice = deviceMap[latestDatum.deviceId];
 
       if (latestDataDevice) {
-        const tags = deviceMap[latestData.deviceId].deviceTags;
+        const tags = deviceMap[latestDatum.deviceId].deviceTags;
 
         switch(true) {
           case (_.includes(tags, 'insulin-pump')):
@@ -2011,8 +2118,8 @@ export const PatientDataClass = createReactClass({
       }
       else {
         // If we were unable, for some reason, to get the device tags for the
-        // latest upload, we can fall back to setting the default view by the data type
-        const type = latestData.type;
+        // latest upload, we can fall back to setting the default view by the data type of the latest diabetes datum
+        const type = latestDiabetesDatum?.type;
 
         switch(type) {
           case 'bolus':
@@ -2039,15 +2146,45 @@ export const PatientDataClass = createReactClass({
     // Determine default chart type and date from latest data
     const uploads = _.get(props.data, 'data.current.data.upload', []);
     const latestDatum = _.last(_.sortBy(_.values(_.get(props.data, 'metaData.latestDatumByType')), ['normalTime']));
+    const latestDiabetesDatums = _.filter(_.values(_.get(props.data, 'metaData.latestDatumByType')), d => _.includes(['cbg', 'smbg', 'bolus', 'basal', 'wizard'], d.type));
+    const latestDiabetesDatum = _.last(_.sortBy(latestDiabetesDatums, ['normalTime']));
     const bgSource = this.getMetaData('bgSources.current');
     const excludedDevices = this.getMetaData('excludedDevices', undefined, props);
+    const chartTypeFromPath = props.match?.params?.chartType;
+
+    let defaultChartTypeForPatient = null;
 
     if (uploads && latestDatum) {
-      // Allow overriding the default chart type via a query param (helps for development);
-      const chartType = this.state.refreshChartType || _.get(
-        props, 'queryParams.chart',
-        this.deriveChartTypeFromLatestData(latestDatum, uploads)
-      );
+      let chartType = null;
+
+      defaultChartTypeForPatient = !utils.isMobile()
+        ? this.deriveChartTypeFromLatestData(latestDatum, latestDiabetesDatum, uploads)
+        : 'basics';
+
+      // Figure out which chart to show based on the current route
+      switch(true) {
+        case chartTypeFromPath === 'settings':
+          chartType = 'settings';
+          break;
+        case chartTypeFromPath === 'trends':
+          chartType = 'trends';
+          break;
+        case chartTypeFromPath === 'daily':
+          chartType = 'daily';
+          break;
+        case chartTypeFromPath === 'basics':
+          chartType = 'basics';
+          break;
+        case chartTypeFromPath === 'bgLog':
+          chartType = 'bgLog';
+          break;
+        case !!this.state.refreshChartType:
+          chartType = this.state.refreshChartType;
+          break;
+        default:
+          chartType = defaultChartTypeForPatient;
+          break;
+      }
 
       const isDaily = chartType === 'daily';
       const isBgLog = chartType === 'bgLog';
@@ -2055,13 +2192,17 @@ export const PatientDataClass = createReactClass({
       const mostRecentDatumTime = this.getMostRecentDatumTimeByChartType(props, chartType);
       const latestDatumDateCeiling = getLocalizedCeiling(mostRecentDatumTime, this.state.timePrefs);
 
-      const datetimeLocation = _.get(props, 'queryParams.datetime', (isDaily || isBgLog)
+      let datetimeLocation = _.get(props, 'queryParams.datetime', (isDaily || isBgLog)
         ? moment.utc(latestDatumDateCeiling.valueOf())
           .tz(isDaily ? getTimezoneFromTimePrefs(this.state.timePrefs) : 'UTC')
           .subtract(12, 'hours')
           .toISOString()
         : moment.utc(latestDatumDateCeiling.valueOf())
           .toISOString());
+
+      if (_.isInteger(_.toNumber(datetimeLocation))) {
+        datetimeLocation = moment.utc(_.toNumber(datetimeLocation)).toISOString();
+      }
 
       const endpoints = this.getChartEndpoints(datetimeLocation, { chartType });
 
@@ -2076,15 +2217,17 @@ export const PatientDataClass = createReactClass({
       this.updateChart(chartType, datetimeLocation, endpoints);
       props.trackMetric(`web - default to ${chartType === 'bgLog' ? 'weekly' : chartType}`);
     }
+
+    return { defaultChartTypeForPatient };
   },
 
 /**
- * Fetches earlier data for the current patient.
+ * Fetches additional data for the current patient.
  *
- * This function is responsible for fetching earlier data for the patient currently in view.
+ * This function is responsible for fetching additional data for the patient currently in view.
  * It checks if data is already being fetched and returns early if so. Otherwise, it constructs
  * the options for the data fetch, updates the component state to indicate loading, logs the
- * fetching action, and triggers the data fetch via the `onFetchEarlierData` prop.
+ * fetching action, and triggers the data fetch via the `onFetchAdditionalData` prop.
  *
  * @param {Object} [options={}] - Optional configuration object for the data fetch.
  * @param {boolean} [options.showLoading=true] - Whether to show the loading indicator.
@@ -2093,19 +2236,20 @@ export const PatientDataClass = createReactClass({
  * @param {boolean} [options.carelink=this.props.carelink] - Whether to include Carelink data.
  * @param {boolean} [options.dexcom=this.props.dexcom] - Whether to include Dexcom data.
  * @param {boolean} [options.medtronic=this.props.medtronic] - Whether to include Medtronic data.
+ * @param {boolean} [options.cbgFilter=this.props.cbgFilter] - Whether to apply the CBG filter for cloud versus non-cloud data.
  * @param {boolean} [options.useCache=false] - Whether to use cached data.
  * @param {boolean} [options.initial=false] - Whether this is the initial data fetch.
  * @param {boolean} [options.noDates=false] - Whether to fetch data without start and end dates..
  *
  * @returns {void}
  */
-  fetchEarlierData: function(options = {}) {
+  fetchAdditionalData: function(options = {}) {
     // Return if we are currently fetching data
     if (this.props.fetchingPatientData) {
       return;
     };
 
-    const earliestRequestedData = _.get(this.props, 'data.fetchedUntil');
+    const earliestRequestedData = this.getCurrentFetchedUntilDate();
 
     const fetchOpts = _.defaults(options, {
       showLoading: true,
@@ -2114,9 +2258,11 @@ export const PatientDataClass = createReactClass({
       carelink: this.props.carelink,
       dexcom: this.props.dexcom,
       medtronic: this.props.medtronic,
+      cbgFilter: this.props.cbgFilter,
       useCache: false,
       initial: false,
       noDates: false,
+      sampleIntervalMinimum: this.state.chartPrefs.daily.cgmSampleIntervalRange?.[0] || DEFAULT_CGM_SAMPLE_INTERVAL,
     });
 
     if (fetchOpts.noDates) {
@@ -2124,16 +2270,17 @@ export const PatientDataClass = createReactClass({
       fetchOpts.endDate = undefined;
     }
 
-    const count = this.state.fetchEarlierDataCount + 1;
+    const count = this.state.fetchAdditionalDataCount + 1;
 
     this.setState({
       loading: options.showLoading,
-      fetchEarlierDataCount: count,
+      fetchAdditionalDataCount: count,
+      fetchingAdditionalData: true,
     });
 
     this.log('fetching');
 
-    this.props.onFetchEarlierData(fetchOpts, this.props.currentPatientInViewId);
+    this.props.onFetchAdditionalData(fetchOpts, this.props.currentPatientInViewId);
 
     const properties = { patientID: this.props.currentPatientInViewId, count };
     if (this.props.selectedClinicId) properties.clinicId = this.props.selectedClinicId;
@@ -2164,6 +2311,11 @@ export const PatientDataClass = createReactClass({
       const medtronic = nextProps.medtronic;
       if (!_.isEmpty(medtronic)) {
         this.props.trackMetric('Web - Medtronic Import URL Param', { medtronic });
+      }
+
+      const cbgFilter = nextProps.cbgFilter;
+      if (!_.isEmpty(cbgFilter)) {
+        this.props.trackMetric('Web - CBG Filter URL Param', { cbgFilter });
       }
 
       const properties = { patientID: nextProps.currentPatientInViewId };
@@ -2202,6 +2354,10 @@ export function getFetchers(dispatchProps, ownProps, stateProps, api, options) {
     fetchers.push(dispatchProps.fetchPendingSentInvites.bind(null, api));
   }
 
+  if (stateProps.isUserPatient && !stateProps.fetchingClinicsForPatient.inProgress && !stateProps.fetchingClinicsForPatient.completed) {
+    fetchers.push(dispatchProps.fetchClinicsForPatient.bind(null, api, ownProps.match.params.id));
+  }
+
   // Need fetchAssociatedAccounts here because the result includes of data donation accounts sharing info
   if (!stateProps.fetchingAssociatedAccounts.inProgress && !stateProps.fetchingAssociatedAccounts.completed) {
     fetchers.push(dispatchProps.fetchAssociatedAccounts.bind(null, api));
@@ -2214,21 +2370,26 @@ export function getFetchers(dispatchProps, ownProps, stateProps, api, options) {
   // if is clinician user viewing a patient's data with no selected clinic
   // we need to check clinics for patient and then select the relevant clinic
 
-  let clinicToSelect = null;
+  const clinicsWithPatient = [];
+
   _.forEach(stateProps.clinics, (clinic, clinicId) => {
     let patient = _.get(clinic.patients, ownProps.match.params.id, null);
     if (patient) {
-      clinicToSelect = clinicId;
+      clinicsWithPatient.push(clinicId);
     }
   });
 
   if (
     personUtils.isClinicianAccount(stateProps.user) &&
     stateProps.user.userid !== ownProps.match.params.id &&
-    (!stateProps.selectedClinicId || stateProps.selectedClinicId !== clinicToSelect) &&
+    (!stateProps.selectedClinicId || !clinicsWithPatient.includes(stateProps.selectedClinicId)) &&
     !stateProps.fetchingPatientFromClinic.inProgress
   ) {
-    if (clinicToSelect) {
+    if (clinicsWithPatient.length > 0) {
+      // In most cases, the clinicsWithPatient array will have length of 1. In cases where the same clinician and patient
+      // are in several of the same clinics, we select one arbitrarily, as we have no further information about which
+      // clinic the clinician is arriving from.
+      const clinicToSelect = clinicsWithPatient[0];
       dispatchProps.selectClinic(api, clinicToSelect);
     } else {
       _.forEach(stateProps.clinics, (clinic, clinicId) => {
@@ -2250,6 +2411,7 @@ export function getFetchers(dispatchProps, ownProps, stateProps, api, options) {
 export function mapStateToProps(state, props) {
   let user = null;
   let patient = null;
+  let clinicPatient = null;
   let permissions = {};
   let permsOfLoggedInUser = {};
 
@@ -2272,16 +2434,17 @@ export function mapStateToProps(state, props) {
       );
 
       if (patient && state.blip.selectedClinicId) {
+        clinicPatient = _.get(state.blip, [
+          'clinics',
+          state.blip.selectedClinicId,
+          'patients',
+          state.blip.currentPatientInViewId
+        ], null);
+
         _.set(
           patient,
           'profile.patient.mrn',
-          _.get(state.blip, [
-            'clinics',
-            state.blip.selectedClinicId,
-            'patients',
-            state.blip.currentPatientInViewId,
-            'mrn'
-          ])
+          clinicPatient?.mrn
         );
       }
 
@@ -2315,11 +2478,13 @@ export function mapStateToProps(state, props) {
     user: user,
     isUserPatient: personUtils.isSame(user, patient),
     patient: { permissions, ...patient },
+    clinicPatient,
     permsOfLoggedInUser: permsOfLoggedInUser,
     messageThread: state.blip.messageThread,
     fetchingPatient: state.blip.working.fetchingPatient.inProgress,
     fetchingPatientData: state.blip.working.fetchingPatientData.inProgress,
     fetchingPatientFromClinic: state.blip.working.fetchingPatientFromClinic,
+    fetchingClinicsForPatient: state.blip.working.fetchingClinicsForPatient,
     fetchingUser: state.blip.working.fetchingUser.inProgress,
     fetchingPendingSentInvites: state.blip.working.fetchingPendingSentInvites,
     fetchingAssociatedAccounts: state.blip.working.fetchingAssociatedAccounts,
@@ -2347,6 +2512,7 @@ let mapDispatchToProps = dispatch => bindActionCreators({
   fetchPatient: actions.async.fetchPatient,
   fetchPatientData: actions.async.fetchPatientData,
   fetchPatientFromClinic: actions.async.fetchPatientFromClinic,
+  fetchClinicsForPatient: actions.async.fetchClinicsForPatient,
   fetchPendingSentInvites: actions.async.fetchPendingSentInvites,
   fetchMessageThread: actions.async.fetchMessageThread,
   generatePDFRequest: actions.worker.generatePDFRequest,
@@ -2361,6 +2527,7 @@ let mergeProps = (stateProps, dispatchProps, ownProps) => {
   const carelink = utils.getCarelink(ownProps.location);
   const dexcom = utils.getDexcom(ownProps.location);
   const medtronic = utils.getMedtronic(ownProps.location);
+  const cbgFilter = utils.getCBGFilter(ownProps.location);
   const api = ownProps.api;
   const assignedDispatchProps = [
     'dataWorkerRemoveDataRequest',
@@ -2374,14 +2541,17 @@ let mergeProps = (stateProps, dispatchProps, ownProps) => {
   ];
 
   return Object.assign({}, _.pick(dispatchProps, assignedDispatchProps), stateProps, {
-    fetchers: getFetchers(dispatchProps, ownProps, stateProps, api, { carelink, dexcom, medtronic }),
+    fetchers: getFetchers(dispatchProps, ownProps, stateProps, api, { carelink, dexcom, medtronic, cbgFilter }),
     history: ownProps.history,
+    location: ownProps.location,
+    match: ownProps.match,
     uploadUrl: api.getUploadUrl(),
     onRefresh: (patientId, chartType) => {
       const fetchOptions = {
         carelink,
         dexcom,
-        medtronic
+        medtronic,
+        cbgFilter,
       };
       if(chartType === 'settings') {
         _.extend(fetchOptions, {
@@ -2402,11 +2572,12 @@ let mergeProps = (stateProps, dispatchProps, ownProps) => {
     queryParams: ownProps.location.query,
     currentPatientInViewId: ownProps.match.params.id,
     updateBasicsSettings: dispatchProps.updateSettings.bind(null, api),
-    onFetchEarlierData: dispatchProps.fetchPatientData.bind(null, api),
+    onFetchAdditionalData: dispatchProps.fetchPatientData.bind(null, api),
     selectClinic: dispatchProps.selectClinic.bind(null, api),
     carelink: carelink,
     dexcom: dexcom,
     medtronic: medtronic,
+    cbgFilter: cbgFilter,
   });
 };
 

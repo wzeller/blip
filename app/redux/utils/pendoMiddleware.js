@@ -1,9 +1,15 @@
+import compact from 'lodash/compact';
+import each from 'lodash/each';
 import get from 'lodash/get';
 import filter from 'lodash/filter';
 import includes from 'lodash/includes';
 import isEmpty from 'lodash/isEmpty';
 import isEqual from 'lodash/isEqual';
 import isNull from 'lodash/isNull';
+import keys from 'lodash/keys';
+import reduce from 'lodash/reduce';
+import uniq from 'lodash/uniq';
+import values from 'lodash/values';
 import bows from 'bows';
 import config from '../../config';
 import * as ActionTypes from '../constants/actionTypes';
@@ -12,8 +18,11 @@ import { setPendoData } from '../actions/sync';
 
 const trackingActions = [
   ActionTypes.LOGIN_SUCCESS,
+  ActionTypes.LOGOUT_REQUEST,
   ActionTypes.SELECT_CLINIC_SUCCESS,
   ActionTypes.DATA_WORKER_ADD_DATA_SUCCESS,
+  ActionTypes.DATA_WORKER_QUERY_DATA_SUCCESS,
+  ActionTypes.DATA_WORKER_REMOVE_DATA_SUCCESS,
   ActionTypes.FETCH_CLINIC_PATIENT_COUNT_SUCCESS,
   ActionTypes.FETCH_CLINIC_PATIENT_COUNT_SETTINGS_SUCCESS,
   ActionTypes.SET_CLINIC_UI_DETAILS,
@@ -28,6 +37,7 @@ const environments = {
   'qa4.development.tidepool.org': 'qa4',
   'qa5.development.tidepool.org': 'qa5',
   'int-app.tidepool.org': 'int',
+  'int-api.tidepool.org': 'int',
   'external.integration.tidepool.org': 'int',
   'app.tidepool.org': 'prd',
   localhost: 'local',
@@ -90,7 +100,7 @@ const pendoMiddleware = (api, win = window) => (storeAPI) => (next) => (action) 
         return clinic?.clinicians?.[user?.userid];
       });
 
-      const optionalVisitorProperties = {};
+      const optionalVisitorProperties = { currentlyViewedDevices: [] };
       const optionalAccountProperties = {};
       let clinic = null;
 
@@ -140,6 +150,7 @@ const pendoMiddleware = (api, win = window) => (storeAPI) => (next) => (action) 
         pendoAction({
           visitor: {
             id: user.userid,
+            currentlyViewedDevices: [],
             permission: null,
           },
           account: {
@@ -158,6 +169,7 @@ const pendoMiddleware = (api, win = window) => (storeAPI) => (next) => (action) 
         pendoAction({
           visitor: {
             id: user.userid,
+            currentlyViewedDevices: [],
             permission: includes(
               selectedClinic?.clinicians?.[user.userid]?.roles,
               'CLINIC_ADMIN'
@@ -267,10 +279,85 @@ const pendoMiddleware = (api, win = window) => (storeAPI) => (next) => (action) 
       }
       break;
     }
+    case ActionTypes.DATA_WORKER_QUERY_DATA_SUCCESS: {
+      const {
+        blip: { currentPatientInViewId, loggedInUserId },
+      } = getState();
+
+      let currentlyViewedDevices = [];
+
+      if (currentPatientInViewId) {
+        const matchedDevices = get(action.payload, 'result.metaData.matchedDevices');
+
+        currentlyViewedDevices = uniq(reduce(values(matchedDevices), (acc, device) => {
+          each(keys(device), (key) => {
+            acc.push(...parseDeviceKeyVersions(key));
+          });
+          return acc;
+        }, []));
+      }
+
+      pendoAction({
+        visitor: {
+          id: loggedInUserId,
+          currentlyViewedDevices,
+        },
+      });
+
+      break;
+    }
+    case ActionTypes.LOGOUT_REQUEST:
+    case ActionTypes.DATA_WORKER_REMOVE_DATA_SUCCESS: {
+      const {
+        blip: { loggedInUserId },
+      } = getState();
+
+      pendoAction({
+        visitor: {
+          id: loggedInUserId,
+          currentlyViewedDevices: [],
+        },
+      });
+      break;
+    }
     default:
       break;
   }
   return next(action);
 };
+
+export function parseDeviceKeyVersions(key) {
+  // Split on the last underscore to separate device origin from version
+  const lastUnderscoreIndex = key.lastIndexOf('_');
+  const deviceOrigin = key.substring(0, lastUnderscoreIndex);
+  const fullVersion = key.substring(lastUnderscoreIndex + 1);
+
+  // Extract just the semver part (everything before the '+' or '-' if they exist)
+  const semver = fullVersion.split('+')[0].split('-')[0];
+  const versionParts = filter(semver.split('.'), part => part && !isNaN(part));
+  const result = [];
+
+  // If no version parts, just return the key
+  if (isEmpty(versionParts)) {
+    return compact([key]);
+  }
+
+  // Add major version
+  if (versionParts.length >= 1) {
+    result.push(`${deviceOrigin}_${versionParts[0]}`);
+  }
+
+  // Add major.minor version
+  if (versionParts.length >= 2) {
+    result.push(`${deviceOrigin}_${versionParts[0]}.${versionParts[1]}`);
+  }
+
+  // Add major.minor.patch version
+  if (versionParts.length >= 3) {
+    result.push(`${deviceOrigin}_${versionParts[0]}.${versionParts[1]}.${versionParts[2]}`);
+  }
+
+  return result;
+}
 
 export default pendoMiddleware;

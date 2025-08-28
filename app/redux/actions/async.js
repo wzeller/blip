@@ -6,7 +6,7 @@ import { checkCacheValid } from 'redux-cache';
 
 import * as ErrorMessages from '../constants/errorMessages';
 import * as UserMessages from '../constants/usrMessages';
-import { ALL_FETCHED_DATA_TYPES, DIABETES_DATA_TYPES } from '../../core/constants';
+import { ALL_FETCHED_DATA_TYPES, DIABETES_DATA_TYPES, MS_IN_MIN, DEFAULT_CGM_SAMPLE_INTERVAL } from '../../core/constants';
 import * as sync from './sync.js';
 import update from 'immutability-helper';
 import personUtils from '../../core/personutils';
@@ -697,7 +697,7 @@ export function updatePreferences(api, patientId, preferences) {
           createActionError(ErrorMessages.ERR_UPDATING_PREFERENCES, err), err
         ));
       } else {
-        dispatch(sync.updatePreferencesSuccess(updatedPreferences));
+        dispatch(sync.updatePreferencesSuccess(patientId, updatedPreferences));
       }
     });
   };
@@ -1039,7 +1039,14 @@ export function fetchPatientData(api, options, id) {
     useCache: true,
     initial: true,
     type: ALL_FETCHED_DATA_TYPES.join(','),
+    forceDataWorkerAddDataRequest: false,
+    sampleIntervalMinimum: DEFAULT_CGM_SAMPLE_INTERVAL,
   });
+
+  // Only fetch relevant dosing decision data
+  if (options.type.indexOf('dosingDecision') !== -1) {
+    options['dosingDecision.reason'] = 'normalBolus,simpleBolus,watchBolus,oneButtonBolus';
+  }
 
   let latestUpload;
   let latestPumpSettings;
@@ -1168,9 +1175,14 @@ export function fetchPatientData(api, options, id) {
       dispatch(sync.fetchPatientDataSuccess(id));
 
       // We only add the data to the worker if another patient id has not been fetched
-      // while we waited on this one, and we are still on an app view specific to that patient
-      if (location.pathname.indexOf(id) >= 0 && (!fetchingPatientId || fetchingPatientId === id)) {
-        dispatch(worker.dataWorkerAddDataRequest(data, options.returnData, patientId, options.startDate));
+      // while we waited on this one, and we are still on an app view specific to that patient.
+      // Also, 'forceDataWorkerAddDataRequest' can be used if not on a patient-specific view.
+      if (
+        options.forceDataWorkerAddDataRequest ||
+        (location.pathname.indexOf(id) >= 0 && (!fetchingPatientId || fetchingPatientId === id))
+      ) {
+        if (options.sampleIntervalMinimum === MS_IN_MIN) options.oneMinCgmFetchedUntil = options.startDate;
+        dispatch(worker.dataWorkerAddDataRequest(data, options.returnData, patientId, options.startDate, options.oneMinCgmFetchedUntil));
       }
     }
 
@@ -1462,208 +1474,46 @@ export function updateDataDonationAccounts(api, addAccounts = [], removeAccounts
 }
 
 /**
- * Dismiss Donate Banner Action Creator
+ * Handle Banner Interaction Action Creator
  *
  * @param  {Object} api an instance of the API wrapper
+ * @param {String} userId - Id of the logged in user
+ * @param {String} interactionId - Identifier used to create banner interaction keys
+ * @param {String} interactionType - One of [clicked, dismissed, seen]
  */
-export function dismissDonateBanner(api, patientId, dismissedDate) {
-  dismissedDate = dismissedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('donate'));
-
-    const preferences = {
-      dismissedDonateYourDataBannerTime: dismissedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Dismiss Dexcom Connect Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function dismissDexcomConnectBanner(api, patientId, dismissedDate) {
-  dismissedDate = dismissedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('dexcom'));
-
-    const preferences = {
-      dismissedDexcomConnectBannerTime: dismissedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Click Dexcom Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function clickDexcomConnectBanner(api, patientId, clickedDate) {
-  clickedDate = clickedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('dexcom'));
-
-    const preferences = {
-      clickedDexcomConnectBannerTime: clickedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Dismiss Update Type Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function dismissUpdateTypeBanner(api, patientId, dismissedDate) {
-  dismissedDate = dismissedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('updatetype'));
-
-    const preferences = {
-      dismissedUpdateTypeBannerTime: dismissedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Click Update Type Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function clickUpdateTypeBanner(api, patientId, clickedDate) {
-  clickedDate = clickedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('updatetype'));
-
-    const preferences = {
-      clickedUpdateTypeBannerTime: clickedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Dismiss Uploader Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function dismissUploaderBanner(api, patientId, dismissedDate) {
-  dismissedDate = dismissedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('uploader'));
-
-    const preferences = {
-      dismissedUploaderBannerTime: dismissedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Click Uploader Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function clickUploaderBanner(api, patientId, clickedDate) {
-  clickedDate = clickedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('uploader'));
-
-    const preferences = {
-      clickedUploaderBannerTime: clickedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-
-/**
- * Dismiss Share Data Connect Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function dismissShareDataBanner(api, patientId, dismissedDate) {
-  dismissedDate = dismissedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('sharedata'));
-
-    const preferences = {
-      dismissedShareDataBannerTime: dismissedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Click Share Data Banner Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function clickShareDataBanner(api, patientId, clickedDate) {
-  clickedDate = clickedDate || sundial.utcDateString();
-
-  return (dispatch) => {
-    dispatch(sync.dismissBanner('sharedata'));
-
-    const preferences = {
-      clickedShareDataBannerTime: clickedDate,
-    };
-
-    dispatch(updatePreferences(api, patientId, preferences));
-  };
-}
-
-/**
- * Count Share Data Banner Seen Action Creator
- *
- * @param  {Object} api an instance of the API wrapper
- */
-export function updateShareDataBannerSeen(api, patientId) {
-  const viewDate = sundial.utcDateString();
-  const viewMoment = moment(viewDate);
-
+export function handleBannerInteraction(api, userId, interactionId, interactionType) {
   return (dispatch, getState) => {
-    const { blip: { loggedInUserId, allUsersMap } } = getState();
-    const loggedInUser = allUsersMap[loggedInUserId];
-    var seenShareDataBannerDate = _.get(loggedInUser, 'preferences.seenShareDataBannerDate', 0);
-    var seenShareDataBannerCount = _.get(loggedInUser, 'preferences.seenShareDataBannerCount', 0);
-
-    const seenShareDataBannerMoment = moment(seenShareDataBannerDate);
-
-    const diffMoment = viewMoment.diff(seenShareDataBannerMoment, 'days');
-
-    if(diffMoment > 0) {
-      seenShareDataBannerCount += 1;
-      seenShareDataBannerDate = viewDate;
+    if (!_.includes(['clicked', 'dismissed', 'seen'], interactionType)) {
+      return;
     }
 
-    const preferences = {
-      seenShareDataBannerDate: seenShareDataBannerDate,
-      seenShareDataBannerCount: seenShareDataBannerCount,
-    };
+    const interactionTime = sundial.utcDateString();
+    let preferences;
 
-    dispatch(sync.bannerCount(seenShareDataBannerCount));
-    dispatch(updatePreferences(api, patientId, preferences));
+    if (interactionType === 'seen') {
+      const { blip: { loggedInUserId, allUsersMap } } = getState();
+      const loggedInUser = allUsersMap[loggedInUserId];
+      const preferenceDateKey = `seen${interactionId}BannerDate`;
+      const preferenceCountKey = `seen${interactionId}BannerCount`;
+      let bannerDate = loggedInUser?.preferences?.[preferenceDateKey] || 0;
+      let bannerCount = loggedInUser?.preferences?.[preferenceCountKey] || 0;
+
+      // If it has been more than a day since the last interaction, update the count and date
+      if(moment(interactionTime).diff(moment(bannerDate), 'days') > 0) {
+        preferences = {
+          [preferenceCountKey]: bannerCount + 1,
+          [preferenceDateKey]: interactionTime,
+        };
+      }
+    } else {
+      const preferenceKey = `${interactionType}${interactionId}BannerTime`;
+
+      preferences = {
+        [preferenceKey]: interactionTime,
+      };
+    }
+
+    if (preferences) dispatch(updatePreferences(api, userId, preferences));
   };
 }
 
@@ -1733,10 +1583,9 @@ export function connectDataSource(api, id, restrictedTokenCreate, dataSourceFilt
  * Disconnect Data Source
  *
  * @param  {Object} api an instance of the API wrapper
- * @param  {String} id the internal provider id
  * @param  {Object} dataSourceFilter the filter for the data source
  */
-export function disconnectDataSource(api, id, dataSourceFilter) {
+export function disconnectDataSource(api, dataSourceFilter) {
   return (dispatch) => {
     dispatch(sync.disconnectDataSourceRequest());
 
@@ -2099,8 +1948,8 @@ export function fetchPatientsForClinic(api, clinicId, options = {}) {
           createActionError(errMsg, err), err, clinicId
         ));
       } else {
-        const { data, meta } = results;
-        dispatch(sync.fetchPatientsForClinicSuccess(clinicId, data, meta.count));
+        const { data, meta: { count, totalCount } } = results;
+        dispatch(sync.fetchPatientsForClinicSuccess(clinicId, data, count, totalCount));
       }
     });
   };
@@ -2795,22 +2644,56 @@ export function revertClinicPatientLastReviewed(api, clinicId, patientId) {
 }
 
 /**
- * Send a dexcom connect reqeust email to a clinic patient
+ * Send a data source connection request email to a clinic patient
+ *
+ * @param {Object} api - an instance of the API wrapper
+ * @param {String} clinicId - clinic Id
+ * @param {String} patientId - id of the patient to send the data source connect request to
+ * @param {String} providerName - name of the provider to send the data source connect request to
+ */
+export function sendPatientDataProviderConnectRequest(api, clinicId, patientId, providerName) {
+  return (dispatch) => {
+    dispatch(sync.sendPatientDataProviderConnectRequestRequest());
+
+    api.clinics.sendPatientDataProviderConnectRequest(clinicId, patientId, providerName, err => {
+      if (err) {
+        dispatch(sync.sendPatientDataProviderConnectRequestFailure(
+          createActionError(ErrorMessages.ERR_SENDING_PATIENT_DATA_PROVIDER_CONNECT_REQUEST, err), err
+        ));
+      } else {
+        dispatch(sync.sendPatientDataProviderConnectRequestSuccess(clinicId, patientId, providerName, moment.utc().toISOString()));
+      }
+    });
+  };
+}
+
+/**
+ * Create a site for a clinic
  *
  * @param {Object} api - an instance of the API wrapper
  * @param {String} clinicId - Id of the clinic
+ * @param {Object} site - the site to create
+ * @param {String} site.name - the site name
  */
-export function sendPatientDexcomConnectRequest(api, clinicId, patientId) {
+export function createClinicSite(api, clinicId, site) {
   return (dispatch) => {
-    dispatch(sync.sendPatientDexcomConnectRequestRequest());
+    dispatch(sync.createClinicSiteRequest());
 
-    api.clinics.sendPatientDexcomConnectRequest(clinicId, patientId, (err, result) => {
+    api.clinics.createClinicSite(clinicId, site, (err, updatedSites) => {
       if (err) {
-        dispatch(sync.sendPatientDexcomConnectRequestFailure(
-          createActionError(ErrorMessages.ERR_SENDING_PATIENT_DEXCOM_CONNECT_REQUEST, err), err
+        let message = ErrorMessages.ERR_CREATING_CLINIC_SITE;
+
+        if (err.status === 422) {
+          message = ErrorMessages.ERR_CREATING_CLINIC_SITE_MAX_EXCEEDED;
+        } else if (err.status === 409) {
+          message = ErrorMessages.ERR_CREATING_CLINIC_SITE_DUPLICATE;
+        }
+
+        dispatch(sync.createClinicSiteFailure(
+          createActionError(message, err), err
         ));
       } else {
-        dispatch(sync.sendPatientDexcomConnectRequestSuccess(clinicId, patientId, _.get(result, 'lastRequestedDexcomConnectTime', moment().toISOString())));
+        dispatch(sync.createClinicSiteSuccess(clinicId, updatedSites));
       }
     });
   };
@@ -2849,6 +2732,37 @@ export function createClinicPatientTag(api, clinicId, patientTag) {
 }
 
 /**
+ * Update a site for a clinic
+ *
+ * @param {Object} api - an instance of the API wrapper
+ * @param {String} clinicId - Id of the clinic
+ * @param {String} siteId - Id of the site
+ * @param {Object} site - the updated site
+ * @param {String} site.name - the site name
+ */
+export function updateClinicSite(api, clinicId, siteId, site) {
+  return (dispatch) => {
+    dispatch(sync.updateClinicSiteRequest());
+
+    api.clinics.updateClinicSite(clinicId, siteId, site, (err, sites) => {
+      if (err) {
+        let message = ErrorMessages.ERR_UPDATING_CLINIC_SITE;
+
+        if (err.status === 409) {
+          message = ErrorMessages.ERR_UPDATING_CLINIC_SITE_DUPLICATE;
+        }
+
+        dispatch(sync.updateClinicSiteFailure(
+          createActionError(message, err), err
+        ));
+      } else {
+        dispatch(sync.updateClinicSiteSuccess(clinicId, sites));
+      }
+    });
+  };
+}
+
+/**
  * Update a patient tag for a clinic
  *
  * @param {Object} api - an instance of the API wrapper
@@ -2866,7 +2780,7 @@ export function updateClinicPatientTag(api, clinicId, patientTagId, patientTag) 
         let message = ErrorMessages.ERR_UPDATING_CLINIC_PATIENT_TAG;
 
         if (err.status === 409) {
-          message = ErrorMessages.ERR_CREATING_CLINIC_PATIENT_TAG_DUPLICATE;
+          message = ErrorMessages.ERR_UPDATING_CLINIC_PATIENT_TAG_DUPLICATE;
         }
 
         dispatch(sync.updateClinicPatientTagFailure(
@@ -2874,6 +2788,29 @@ export function updateClinicPatientTag(api, clinicId, patientTagId, patientTag) 
         ));
       } else {
         dispatch(sync.updateClinicPatientTagSuccess(clinicId, patientTags));
+      }
+    });
+  };
+}
+
+/**
+ * Delete a site for a clinic
+ *
+ * @param {Object} api - an instance of the API wrapper
+ * @param {String} clinicId - Id of the clinic
+ * @param {String} siteId - Id of the site to delete
+ */
+export function deleteClinicSite(api, clinicId, siteId) {
+  return (dispatch) => {
+    dispatch(sync.deleteClinicSiteRequest());
+
+    api.clinics.deleteClinicSite(clinicId, siteId, (err, sites) => {
+      if (err) {
+        dispatch(sync.deleteClinicSiteFailure(
+          createActionError(ErrorMessages.ERR_DELETING_CLINIC_SITE, err), err
+        ));
+      } else {
+        dispatch(sync.deleteClinicSiteSuccess(clinicId, sites));
       }
     });
   };
