@@ -22,7 +22,7 @@ import initialState from '../../../../app/redux/reducers/initialState';
 import * as ErrorMessages from '../../../../app/redux/constants/errorMessages';
 import * as UserMessages from '../../../../app/redux/constants/usrMessages';
 
-import { TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL, MMOLL_UNITS, ALL_FETCHED_DATA_TYPES, MS_IN_MIN } from '../../../../app/core/constants';
+import { MMOLL_UNITS, ALL_FETCHED_DATA_TYPES, MS_IN_MIN } from '../../../../app/core/constants';
 
 // need to require() async in order to rewire utils inside
 const async = require('../../../../app/redux/actions/async');
@@ -2318,41 +2318,6 @@ describe('Actions', () => {
         sinon.assert.calledWithExactly(callback, null, invite);
       });
 
-      it('should trigger FETCH_PENDING_SENT_INVITES_REQUEST once for a successful request for a data donation account', () => {
-        let email = 'a@b.com';
-        let permissions = {
-          view: true
-        };
-        let invite = { email: TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL };
-        let api = {
-          invitation: {
-            send: sinon.stub().callsArgWith(2, null, invite),
-            getSent: sinon.stub(),
-          }
-        };
-
-        let expectedActions = [
-          { type: 'SEND_INVITE_REQUEST' },
-          { type: 'FETCH_PENDING_SENT_INVITES_REQUEST' },
-          { type: 'SEND_INVITE_SUCCESS', payload: { invite: invite } },
-        ];
-        _.each(expectedActions, (action) => {
-          expect(isTSA(action)).to.be.true;
-        });
-        let store = mockStore({ blip: initialState });
-        const callback = sinon.stub();
-
-        store.dispatch(async.sendInvite(api, email, permissions, callback));
-
-        const actions = store.getActions();
-        expect(actions).to.eql(expectedActions);
-        expect(api.invitation.send.calledWith(email, permissions)).to.be.true;
-
-        // assert callback contains no error, and the invite
-        sinon.assert.calledOnce(callback);
-        sinon.assert.calledWithExactly(callback, null, invite);
-      });
-
       it('should trigger SEND_INVITE_FAILURE when invite has already been sent to the e-mail', () => {
         let email = 'a@b.com';
         let permissions = {
@@ -2556,101 +2521,6 @@ describe('Actions', () => {
         // assert callback contains the error
         sinon.assert.calledOnce(callback);
         sinon.assert.calledWithExactly(callback, error, email);
-      });
-    });
-
-    describe('updateDataDonationAccounts', () => {
-      it('should trigger UPDATE_DATA_DONATION_ACCOUNTS_SUCCESS and it should add and remove accounts for a successful request', () => {
-        let addAccounts = [
-          TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL,
-        ];
-
-        let removeAccounts = [
-          { email: 'bigdata+NSF@tidepool.org' },
-        ];
-
-        let api = {
-          invitation: {
-            send: sinon.stub().callsArgWith(2, null, { email: TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL }),
-            cancel: sinon.stub().callsArgWith(1, null, { removedEmail: 'bigdata+NSF@tidepool.org' }),
-            getSent: sinon.stub(),
-          }
-        };
-
-        let expectedActions = [
-          { type: 'UPDATE_DATA_DONATION_ACCOUNTS_REQUEST' },
-          { type: 'SEND_INVITE_REQUEST'},
-          { type: 'FETCH_PENDING_SENT_INVITES_REQUEST'},
-          { type: 'SEND_INVITE_SUCCESS', payload: { invite: { email: TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL } } },
-          { type: 'CANCEL_SENT_INVITE_REQUEST' },
-          { type: 'CANCEL_SENT_INVITE_SUCCESS', payload: { removedEmail: 'bigdata+NSF@tidepool.org' } },
-          { type: 'UPDATE_DATA_DONATION_ACCOUNTS_SUCCESS', payload: { dataDonationAccounts: {
-            addAccounts: _.map(addAccounts, email => ({ email: email })),
-            removeAccounts: _.map(removeAccounts, account => account.email),
-          }}}
-        ];
-        _.each(expectedActions, (action) => {
-          expect(isTSA(action)).to.be.true;
-        });
-
-        let store = mockStore(_.assign({}, initialState, {
-          blip: { loggedInUserId: 1234 },
-        }));
-
-        store.dispatch(async.updateDataDonationAccounts(api, addAccounts, removeAccounts));
-
-        const actions = store.getActions();
-        expect(actions).to.eql(expectedActions);
-      });
-
-      it('should trigger UPDATE_DATA_DONATION_ACCOUNTS_FAILURE and it should call error once for a failed add account request', () => {
-        let addAccounts = [
-          TIDEPOOL_DATA_DONATION_ACCOUNT_EMAIL,
-        ];
-
-        let removeAccounts = [
-          { email: 'bigdata+NSF@tidepool.org' },
-        ];
-
-        let err = new Error(ErrorMessages.ERR_UPDATING_DATA_DONATION_ACCOUNTS);
-        err.status = 500;
-
-        let sendErr = new Error(ErrorMessages.ERR_SENDING_INVITE);
-        sendErr.status = 500;
-
-        let api = {
-          invitation: {
-            send: sinon.stub().callsArgWith(2, { status: 500, body: 'Error!' } , null),
-            cancel: sinon.stub().callsArgWith(1, null, { removedEmail: 'bigdata+NSF@tidepool.org' }),
-            getSent: sinon.stub(),
-          }
-        };
-
-        let expectedActions = [
-          { type: 'UPDATE_DATA_DONATION_ACCOUNTS_REQUEST' },
-          { type: 'SEND_INVITE_REQUEST' },
-          { type: 'SEND_INVITE_FAILURE', error: sendErr, meta: { apiError: { status: 500, body: 'Error!' } } },
-          { type: 'CANCEL_SENT_INVITE_REQUEST' },
-          { type: 'CANCEL_SENT_INVITE_SUCCESS', payload: { removedEmail: 'bigdata+NSF@tidepool.org' } },
-          { type: 'UPDATE_DATA_DONATION_ACCOUNTS_FAILURE', error: err, meta: { apiError: { status: 500, body: 'Error!' } } },
-        ];
-
-        _.each(expectedActions, (action) => {
-          expect(isTSA(action)).to.be.true;
-        });
-
-        let store = mockStore(_.assign({}, initialState, {
-          blip: { loggedInUserId: 1234 },
-        }));
-
-        store.dispatch(async.updateDataDonationAccounts(api, addAccounts, removeAccounts));
-
-        const actions = store.getActions();
-        expect(actions[2].error).to.deep.include({ message: ErrorMessages.ERR_SENDING_INVITE });
-        expectedActions[2].error = actions[2].error;
-        expect(actions[5].error).to.deep.include({ message: ErrorMessages.ERR_UPDATING_DATA_DONATION_ACCOUNTS });
-        expectedActions[5].error = actions[5].error;
-        expect(actions).to.eql(expectedActions);
       });
     });
 
@@ -4237,6 +4107,7 @@ describe('Actions', () => {
               'smbg',
               'basal',
               'bolus',
+              'insulin',
               'wizard',
               'food',
               'pumpSettings',
@@ -4829,6 +4700,296 @@ describe('Actions', () => {
         expectedActions[1].error = actions[1].error;
         expect(actions).to.eql(expectedActions);
         expect(api.devices.getAll.callCount).to.equal(1);
+      });
+    });
+
+    describe('fetchLatestConsentByType', () => {
+      it('should trigger FETCH_LATEST_CONSENT_BY_TYPE_SUCCESS and it should call consent.getLatestConsentByType once for a successful request', () => {
+        const consentType = 'consentType123';
+        const consentDocument = { id: 'consentDocument123' };
+
+        const api = {
+          consent: {
+            getLatestConsentByType: sinon.stub().callsArgWith(1, null, consentDocument),
+          },
+        };
+
+        const expectedActions = [
+          { type: 'FETCH_LATEST_CONSENT_BY_TYPE_REQUEST' },
+          { type: 'FETCH_LATEST_CONSENT_BY_TYPE_SUCCESS', payload: { consentType, consentDocument } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.fetchLatestConsentByType(api, consentType));
+
+        const actions = store.getActions();
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.getLatestConsentByType.callCount).to.equal(1);
+      });
+
+      it('should trigger FETCH_LATEST_CONSENT_BY_TYPE_FAILURE and it should call error once for a failed request', () => {
+        const consentType = 'consentType123';
+
+        const api = {
+          consent: {
+            getLatestConsentByType: sinon.stub().callsArgWith(1, {status: 500, body: 'Error!'}, null),
+          },
+        };
+
+        const err = new Error(ErrorMessages.ERR_FETCHING_LATEST_CONSENT_BY_TYPE);
+        err.status = 500;
+
+        const expectedActions = [
+          { type: 'FETCH_LATEST_CONSENT_BY_TYPE_REQUEST' },
+          { type: 'FETCH_LATEST_CONSENT_BY_TYPE_FAILURE', error: err, meta: { apiError: {status: 500, body: 'Error!'} } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.fetchLatestConsentByType(api, consentType));
+
+        const actions = store.getActions();
+        expect(actions[1].error).to.deep.include({ message: ErrorMessages.ERR_FETCHING_LATEST_CONSENT_BY_TYPE });
+        expectedActions[1].error = actions[1].error;
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.getLatestConsentByType.callCount).to.equal(1);
+      });
+    });
+
+    describe('fetchUserConsentRecords', () => {
+      it('should trigger FETCH_USER_CONSENT_RECORDS_SUCCESS and it should call consent.getLatestConsentByType once for a successful request', () => {
+        const consentType = 'consentType123';
+        const records = [{ id: 'consentDocument123' }];
+
+        const api = {
+          consent: {
+            getUserConsentRecords: sinon.stub().callsArgWith(2, null, records),
+          },
+        };
+
+        const expectedActions = [
+          { type: 'FETCH_USER_CONSENT_RECORDS_REQUEST' },
+          { type: 'FETCH_USER_CONSENT_RECORDS_SUCCESS', payload: { consentType, records } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.fetchUserConsentRecords(api, consentType));
+
+        const actions = store.getActions();
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.getUserConsentRecords.callCount).to.equal(1);
+      });
+
+      it('should trigger FETCH_USER_CONSENT_RECORDS_FAILURE and it should call error once for a failed request', () => {
+        const consentType = 'consentType123';
+
+        const api = {
+          consent: {
+            getUserConsentRecords: sinon.stub().callsArgWith(2, {status: 500, body: 'Error!'}, null),
+          },
+        };
+
+        const err = new Error(ErrorMessages.ERR_FETCHING_USER_CONSENT_RECORDS);
+        err.status = 500;
+
+        const expectedActions = [
+          { type: 'FETCH_USER_CONSENT_RECORDS_REQUEST' },
+          { type: 'FETCH_USER_CONSENT_RECORDS_FAILURE', error: err, meta: { apiError: {status: 500, body: 'Error!'} } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.fetchUserConsentRecords(api, consentType));
+
+        const actions = store.getActions();
+        expect(actions[1].error).to.deep.include({ message: ErrorMessages.ERR_FETCHING_USER_CONSENT_RECORDS });
+        expectedActions[1].error = actions[1].error;
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.getUserConsentRecords.callCount).to.equal(1);
+      });
+    });
+
+    describe('createUserConsentRecord', () => {
+      it('should trigger CREATE_USER_CONSENT_RECORD_SUCCESS and it should call consent.getLatestConsentByType once for a successful request', () => {
+        const consentType = 'consentType123';
+        const createdRecord = { id: 'consentDocument123', type: consentType };
+
+        const api = {
+          consent: {
+            createUserConsentRecord: sinon.stub().callsArgWith(2, null, createdRecord),
+          },
+        };
+
+        const expectedActions = [
+          { type: 'CREATE_USER_CONSENT_RECORD_REQUEST' },
+          { type: 'CREATE_USER_CONSENT_RECORD_SUCCESS', payload: { createdRecord } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.createUserConsentRecord(api, createdRecord));
+
+        const actions = store.getActions();
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.createUserConsentRecord.callCount).to.equal(1);
+      });
+
+      it('should trigger CREATE_USER_CONSENT_RECORD_FAILURE and it should call error once for a failed request', () => {
+        const consentType = 'consentType123';
+        const createdRecord = { id: 'consentDocument123', type: consentType };
+
+        const api = {
+          consent: {
+            createUserConsentRecord: sinon.stub().callsArgWith(2, {status: 500, body: 'Error!'}, null),
+          },
+        };
+
+        const err = new Error(ErrorMessages.ERR_FETCHING_USER_CONSENT_RECORDS);
+        err.status = 500;
+
+        const expectedActions = [
+          { type: 'CREATE_USER_CONSENT_RECORD_REQUEST' },
+          { type: 'CREATE_USER_CONSENT_RECORD_FAILURE', error: err, meta: { apiError: {status: 500, body: 'Error!'} } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.createUserConsentRecord(api, createdRecord));
+
+        const actions = store.getActions();
+        expect(actions[1].error).to.deep.include({ message: ErrorMessages.ERR_CREATING_USER_CONSENT_RECORD });
+        expectedActions[1].error = actions[1].error;
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.createUserConsentRecord.callCount).to.equal(1);
+      });
+    });
+
+    describe('updateUserConsentRecord', () => {
+      it('should trigger UPDATE_USER_CONSENT_RECORD_SUCCESS and it should call consent.getLatestConsentByType once for a successful request', () => {
+        const consentType = 'consentType123';
+        const recordId = 'consentDocument123';
+        const updatedRecord = { id: recordId, type: consentType };
+
+        const api = {
+          consent: {
+            updateUserConsentRecord: sinon.stub().callsArgWith(3, null, updatedRecord),
+          },
+        };
+
+        const expectedActions = [
+          { type: 'UPDATE_USER_CONSENT_RECORD_REQUEST' },
+          { type: 'UPDATE_USER_CONSENT_RECORD_SUCCESS', payload: { updatedRecord } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.updateUserConsentRecord(api, recordId, updatedRecord));
+
+        const actions = store.getActions();
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.updateUserConsentRecord.callCount).to.equal(1);
+      });
+
+      it('should trigger UPDATE_USER_CONSENT_RECORD_FAILURE and it should call error once for a failed request', () => {
+        const consentType = 'consentType123';
+        const recordId = 'consentDocument123';
+        const updatedRecord = { id: recordId, type: consentType };
+
+        const api = {
+          consent: {
+            updateUserConsentRecord: sinon.stub().callsArgWith(3, {status: 500, body: 'Error!'}, null),
+          },
+        };
+
+        const err = new Error(ErrorMessages.ERR_FETCHING_USER_CONSENT_RECORDS);
+        err.status = 500;
+
+        const expectedActions = [
+          { type: 'UPDATE_USER_CONSENT_RECORD_REQUEST' },
+          { type: 'UPDATE_USER_CONSENT_RECORD_FAILURE', error: err, meta: { apiError: {status: 500, body: 'Error!'} } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.updateUserConsentRecord(api, recordId, updatedRecord));
+
+        const actions = store.getActions();
+        expect(actions[1].error).to.deep.include({ message: ErrorMessages.ERR_UPDATING_USER_CONSENT_RECORD });
+        expectedActions[1].error = actions[1].error;
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.updateUserConsentRecord.callCount).to.equal(1);
+      });
+    });
+
+    describe('revokeUserConsentRecord', () => {
+      it('should trigger REVOKE_USER_CONSENT_RECORD_SUCCESS and it should call consent.getLatestConsentByType once for a successful request', () => {
+        const consentType = 'consentType123';
+        const recordId = 'consentDocument123';
+
+        const api = {
+          consent: {
+            revokeUserConsentRecord: sinon.stub().callsArgWith(2, null, null),
+          },
+        };
+
+        const expectedActions = [
+          { type: 'REVOKE_USER_CONSENT_RECORD_REQUEST' },
+          { type: 'REVOKE_USER_CONSENT_RECORD_SUCCESS', payload: { consentType } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.revokeUserConsentRecord(api, consentType, recordId));
+
+        const actions = store.getActions();
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.revokeUserConsentRecord.callCount).to.equal(1);
+      });
+
+      it('should trigger REVOKE_USER_CONSENT_RECORD_FAILURE and it should call error once for a failed request', () => {
+        const consentType = 'consentType123';
+        const recordId = 'consentDocument123';
+
+        const api = {
+          consent: {
+            revokeUserConsentRecord: sinon.stub().callsArgWith(2, {status: 500, body: 'Error!'}, null),
+          },
+        };
+
+        const err = new Error(ErrorMessages.ERR_FETCHING_USER_CONSENT_RECORDS);
+        err.status = 500;
+
+        const expectedActions = [
+          { type: 'REVOKE_USER_CONSENT_RECORD_REQUEST' },
+          { type: 'REVOKE_USER_CONSENT_RECORD_FAILURE', error: err, meta: { apiError: {status: 500, body: 'Error!'} } }
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+        const store = mockStore({ blip: initialState });
+        store.dispatch(async.revokeUserConsentRecord(api, consentType, recordId));
+
+        const actions = store.getActions();
+        expect(actions[1].error).to.deep.include({ message: ErrorMessages.ERR_REVOKING_USER_CONSENT_RECORD });
+        expectedActions[1].error = actions[1].error;
+        expect(actions).to.eql(expectedActions);
+        expect(api.consent.revokeUserConsentRecord.callCount).to.equal(1);
       });
     });
 
@@ -6019,6 +6180,11 @@ describe('Actions', () => {
         let api = {
           clinics: {
             deletePatientFromClinic: sinon.stub().callsArgWith(2, null, { foo: 'bar '}),
+            getClinicPatientCount: sinon.stub().callsArgWith(1, null, {
+              demo: 1,
+              plan: 249,
+              total: 250
+            }),
           },
         };
 
@@ -6027,6 +6193,15 @@ describe('Actions', () => {
           { type: 'DELETE_PATIENT_FROM_CLINIC_SUCCESS', payload: {
             clinicId,
             patientId,
+          } },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST' },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_SUCCESS', payload: {
+            clinicId,
+            patientCounts: {
+              demo: 1,
+              plan: 249,
+              total: 250
+            }
           } },
           {
             payload: {
@@ -6053,10 +6228,10 @@ describe('Actions', () => {
                     workspacePlan: true,
                   },
                   text: {
-                    limitDescription: 'Limited to 250 patients',
+                    limitDescription: 'This plan allows for a limited number of patient accounts.',
                     limitFeedback: {
                       status: 'warning',
-                      text: 'Maximum of 250 patient accounts reached',
+                      text: 'Maximum number of patient accounts reached',
                     },
                     limitResolutionLink: {
                       text: 'Unlock plans',
@@ -6086,10 +6261,14 @@ describe('Actions', () => {
             [clinicId]: {
               country: 'US',
               tier: 'tier0100',
-              patientCount: 250,
+              patientCounts: {
+                demo: 1,
+                plan: 250,
+                total: 251
+              },
               patientCountSettings: {
                 hardLimit: {
-                  patientCount: 250,
+                  plan: 250,
                   startDate: moment().subtract(1, 'day').toISOString(),
                 },
               },
@@ -6489,7 +6668,7 @@ describe('Actions', () => {
     });
 
     describe('createClinicCustodialAccount', () => {
-      it('should trigger CREATE_CLINIC_CUSTODIAL_ACCOUNT_SUCCESS and it should call clinics.createClinicCustodialAccount and update clinic UI details once for a successful request', () => {
+      it('should trigger CREATE_CLINIC_CUSTODIAL_ACCOUNT_SUCCESS and it should call clinics.createClinicCustodialAccount and refetch clinic patient counts', () => {
         let clinicId = '5f85fbe6686e6bb9170ab5d0';
         let patient = {
           fullName: 'patientName',
@@ -6500,6 +6679,11 @@ describe('Actions', () => {
         let api = {
           clinics: {
             createClinicCustodialAccount: sinon.stub().callsArgWith(2, null, patient),
+            getClinicPatientCount: sinon.stub().callsArgWith(1, null, {
+              demo: 1,
+              plan: 251,
+              total: 252
+            }),
           },
         };
 
@@ -6510,6 +6694,18 @@ describe('Actions', () => {
             patientId: 'patient123',
             patient,
           } },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST' },
+          {
+            payload: {
+              clinicId: '5f85fbe6686e6bb9170ab5d0',
+              patientCounts: {
+                demo: 1,
+                plan: 251,
+                total: 252
+              }
+            },
+            type: 'FETCH_CLINIC_PATIENT_COUNTS_SUCCESS'
+          },
           {
             payload: {
               clinicId: '5f85fbe6686e6bb9170ab5d0',
@@ -6535,10 +6731,10 @@ describe('Actions', () => {
                     workspacePlan: true,
                   },
                   text: {
-                    limitDescription: 'Limited to 250 patients',
+                    limitDescription: 'This plan allows for a limited number of patient accounts.',
                     limitFeedback: {
                       status: 'warning',
-                      text: 'Maximum of 250 patient accounts reached',
+                      text: 'Maximum number of patient accounts reached',
                     },
                     limitResolutionLink: {
                       text: 'Contact us to unlock plans',
@@ -6566,10 +6762,10 @@ describe('Actions', () => {
             [clinicId]: {
               country: 'US',
               tier: 'tier0100',
-              patientCount: 249,
+              patientCounts: { plan: 249 },
               patientCountSettings: {
                 hardLimit: {
-                  patientCount: 250,
+                  plan: 250,
                   startDate: moment().subtract(1, 'day').toISOString(),
                 },
               },
@@ -6710,7 +6906,7 @@ describe('Actions', () => {
         };
         let api = {
           clinics: {
-            getClinicPatientCount: sinon.stub().callsArgWith(1, null, { patientCount: 251 }),
+            getClinicPatientCount: sinon.stub().callsArgWith(1, null, { demo: 1, plan: 251, total: 252 }),
             createClinicCustodialAccount: sinon.stub()
               .callsArgWith(2, { status: 402, body: 'Error!' }, null),
           },
@@ -6723,8 +6919,8 @@ describe('Actions', () => {
 
         let expectedActions = [
           { type: 'CREATE_CLINIC_CUSTODIAL_ACCOUNT_REQUEST' },
-          { type: 'FETCH_CLINIC_PATIENT_COUNT_REQUEST' },
-          { type: 'FETCH_CLINIC_PATIENT_COUNT_SUCCESS', payload: { clinicId: '5f85fbe6686e6bb9170ab5d0', patientCount: 251 } },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST' },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_SUCCESS', payload: { clinicId: '5f85fbe6686e6bb9170ab5d0', patientCounts: { demo: 1, plan: 251, total: 252 } } },
           {
             type: 'SET_CLINIC_UI_DETAILS',
             payload: {
@@ -6752,10 +6948,10 @@ describe('Actions', () => {
                   },
                   text: {
                     planDisplayName: 'Base',
-                    limitDescription: 'Limited to 250 patients',
+                    limitDescription: 'This plan allows for a limited number of patient accounts.',
                     limitFeedback: {
                      status: 'warning',
-                     text: 'Maximum of 250 patient accounts reached',
+                     text: 'Maximum number of patient accounts reached',
                     },
                     limitResolutionLink: {
                       text: 'Contact us to unlock plans',
@@ -6787,7 +6983,7 @@ describe('Actions', () => {
               tier: 'tier0100',
               patientCountSettings: {
                 hardLimit: {
-                  patientCount: 250,
+                  plan: 250,
                   startDate: moment().subtract(1, 'day').toISOString(),
                 }
               }
@@ -7646,6 +7842,11 @@ describe('Actions', () => {
         let api = {
           clinics: {
             acceptPatientInvitation: sinon.stub().callsArgWith(3, null, {}),
+            getClinicPatientCount: sinon.stub().callsArgWith(1, null, {
+              demo: 1,
+              plan: 250,
+              total: 251
+            }),
           },
         };
 
@@ -7656,6 +7857,20 @@ describe('Actions', () => {
             inviteId: 'inviteIdABC',
             patientId: 'patientId456'
           } },
+          {
+            type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST'
+          },
+          {
+            payload: {
+              clinicId: 'clinicId123',
+              patientCounts: {
+                demo: 1,
+                plan: 250,
+                total: 251
+              }
+            },
+            type: 'FETCH_CLINIC_PATIENT_COUNTS_SUCCESS'
+          },
           {
             payload: {
               clinicId: 'clinicId123',
@@ -7681,10 +7896,10 @@ describe('Actions', () => {
                     workspacePlan: true,
                   },
                   text: {
-                    limitDescription: 'Limited to 250 patients',
+                    limitDescription: 'This plan allows for a limited number of patient accounts.',
                     limitFeedback: {
                       status: 'warning',
-                      text: 'Maximum of 250 patient accounts reached',
+                      text: 'Maximum number of patient accounts reached',
                     },
                     limitResolutionLink: {
                       text: 'Contact us to unlock plans',
@@ -7712,10 +7927,10 @@ describe('Actions', () => {
             [clinicId]: {
               country: 'US',
               tier: 'tier0100',
-              patientCount: 249,
+              patientCounts: { plan: 249 },
               patientCountSettings: {
                 hardLimit: {
-                  patientCount: 250,
+                  plan: 250,
                   startDate: moment().subtract(1, 'day').toISOString(),
                 },
               },
@@ -8562,6 +8777,113 @@ describe('Actions', () => {
         });
 
         let store = mockStore({ blip: initialState });
+
+        store.dispatch(async.sendPatientDataProviderConnectRequest(api, clinicId, patientId, providerName));
+
+        const actions = store.getActions();
+        expect(actions).to.eql(expectedActions);
+        expect(api.clinics.sendPatientDataProviderConnectRequest.callCount).to.equal(1);
+      });
+
+      it('should trigger SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_SUCCESS and update clinic patient counts for a successful twiist connect request', () => {
+        const clinicId = 'clinicId1';
+        const patientId = 'patientId1';
+        const providerName = 'twiist';
+        const createdTime = '2022-02-02T00:00:00.000Z';
+
+        let api = {
+          clinics: {
+            sendPatientDataProviderConnectRequest: sinon.stub().callsArgWith(3, null),
+            getClinicPatientCount: sinon.stub().callsArgWith(1, null, {
+              demo: 1,
+              plan: 251,
+              total: 252
+            }),
+          },
+        };
+
+        let expectedActions = [
+          { type: 'SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_REQUEST' },
+          { type: 'SEND_PATIENT_DATA_PROVIDER_CONNECT_REQUEST_SUCCESS', payload: { clinicId, patientId, providerName, createdTime } },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST' },
+          {
+            payload: {
+              clinicId,
+              patientCounts: {
+                demo: 1,
+                plan: 251,
+                total: 252
+              }
+            },
+            type: 'FETCH_CLINIC_PATIENT_COUNTS_SUCCESS'
+          },
+          {
+            payload: {
+              clinicId,
+              uiDetails: {
+                entitlements: {
+                  patientTags: false,
+                  clinicSites: false,
+                  prescriptions: false,
+                  rpmReport: false,
+                  summaryDashboard: false,
+                  tideDashboard: false,
+                },
+                patientLimitEnforced: true,
+                planName: 'base',
+                ui: {
+                  display: {
+                    patientCount: true,
+                    patientLimit: true,
+                    planName: true,
+                    workspaceLimitDescription: false,
+                    workspaceLimitFeedback: true,
+                    workspaceLimitResolutionLink: true,
+                    workspacePlan: true,
+                  },
+                  text: {
+                    limitDescription: 'This plan allows for a limited number of patient accounts.',
+                    limitFeedback: {
+                      status: 'warning',
+                      text: 'Maximum number of patient accounts reached',
+                    },
+                    limitResolutionLink: {
+                      text: 'Contact us to unlock plans',
+                      url: 'https://app.cronofy.com/add_to_calendar/scheduling/-hq0nDA6',
+                    },
+                    planDisplayName: 'Base',
+                  },
+                  warnings: {
+                    limitApproaching: true,
+                    limitReached: true,
+                  },
+                },
+              },
+            },
+            type: 'SET_CLINIC_UI_DETAILS',
+          },
+        ];
+        _.each(expectedActions, (action) => {
+          expect(isTSA(action)).to.be.true;
+        });
+
+        let store = mockStore({ blip: {
+          ...initialState,
+          clinics: {
+            [clinicId]: {
+              country: 'US',
+              tier: 'tier0100',
+              patientCounts: { plan: 249 },
+              patientCountSettings: {
+                hardLimit: {
+                  plan: 250,
+                  startDate: moment().subtract(1, 'day').toISOString(),
+                },
+              },
+            },
+          },
+        } });
+
         store.dispatch(async.sendPatientDataProviderConnectRequest(api, clinicId, patientId, providerName));
 
         const actions = store.getActions();
@@ -8614,7 +8936,7 @@ describe('Actions', () => {
 
         let expectedActions = [
           { type: 'CREATE_CLINIC_PATIENT_TAG_REQUEST' },
-          { type: 'CREATE_CLINIC_PATIENT_TAG_SUCCESS', payload: { clinicId, patientTags: [patientTag] } }
+          { type: 'CREATE_CLINIC_PATIENT_TAG_SUCCESS', payload: { clinicId, patientTag: [patientTag] } },
         ];
         _.each(expectedActions, (action) => {
           expect(isTSA(action)).to.be.true;
@@ -8730,7 +9052,7 @@ describe('Actions', () => {
 
         let expectedActions = [
           { type: 'UPDATE_CLINIC_PATIENT_TAG_REQUEST' },
-          { type: 'UPDATE_CLINIC_PATIENT_TAG_SUCCESS', payload: { clinicId, patientTags: [patientTag] } }
+          { type: 'UPDATE_CLINIC_PATIENT_TAG_SUCCESS', payload: { clinicId, patientTag: [patientTag] } },
         ];
         _.each(expectedActions, (action) => {
           expect(isTSA(action)).to.be.true;
@@ -8818,7 +9140,7 @@ describe('Actions', () => {
 
         let expectedActions = [
           { type: 'DELETE_CLINIC_PATIENT_TAG_REQUEST' },
-          { type: 'DELETE_CLINIC_PATIENT_TAG_SUCCESS', payload: { clinicId, patientTags: [] } }
+          { type: 'DELETE_CLINIC_PATIENT_TAG_SUCCESS', payload: { clinicId, patientTagId: 'patientTagId1' } },
         ];
         _.each(expectedActions, (action) => {
           expect(isTSA(action)).to.be.true;
@@ -9095,9 +9417,9 @@ describe('Actions', () => {
     });
 
     describe('selectClinic', () => {
-      it('should trigger SELECT_CLINIC_SUCCESS, FETCH_CLINIC_PATIENT_COUNT_SUCCESS, and FETCH_CLINIC_PATIENT_COUNT_SETTINGS_SUCCESS for a successful request', () => {
+      it('should trigger SELECT_CLINIC_SUCCESS, FETCH_CLINIC_PATIENT_COUNTS_SUCCESS, and FETCH_CLINIC_PATIENT_COUNT_SETTINGS_SUCCESS for a successful request', () => {
         const clinicId = 'clinic123';
-        const countResults = { patientCount: 33 };
+        const countResults = { plan: 33 };
         const settingsResults = {bar: 'baz'};
 
         let api = {
@@ -9113,11 +9435,11 @@ describe('Actions', () => {
 
         let expectedActions = [
           { type: 'SELECT_CLINIC_SUCCESS', payload: { clinicId } },
-          { type: 'FETCH_CLINIC_PATIENT_COUNT_REQUEST' },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST' },
           { type: 'FETCH_CLINIC_PATIENT_COUNT_SETTINGS_REQUEST' },
           {
-            type: 'FETCH_CLINIC_PATIENT_COUNT_SUCCESS',
-            payload: { clinicId, patientCount: 33 },
+            type: 'FETCH_CLINIC_PATIENT_COUNTS_SUCCESS',
+            payload: { clinicId, patientCounts: countResults },
           },
           {
             type: 'FETCH_CLINIC_PATIENT_COUNT_SETTINGS_SUCCESS',
@@ -9171,7 +9493,7 @@ describe('Actions', () => {
           ...initialState,
           clinics: {
             [clinicId]: {
-              patientCount: undefined,
+              patientCounts: undefined,
               patientCountSettings: undefined,
             },
           },
@@ -9187,7 +9509,7 @@ describe('Actions', () => {
         expect(api.clinics.getClinicPatientCountSettings.callCount).to.equal(1);
       });
 
-      it('should trigger SELECT_CLINIC_SUCCESS, but not FETCH_CLINIC_PATIENT_COUNT_REQUEST or FETCH_CLINIC_PATIENT_COUNT_SETTINGS_REQUEST for a successful request if data available in clinic state', () => {
+      it('should trigger SELECT_CLINIC_SUCCESS, but not FETCH_CLINIC_PATIENT_COUNTS_REQUEST or FETCH_CLINIC_PATIENT_COUNT_SETTINGS_REQUEST for a successful request if data available in clinic state', () => {
         const clinicId = 'clinic123';
 
         let api = {
@@ -9247,7 +9569,7 @@ describe('Actions', () => {
           ...initialState,
           clinics: {
             [clinicId]: {
-              patientCount: 33,
+              patientCounts: { plan: 33 },
               patientCountSettings: { foo: 'bar' },
             },
           },
@@ -9263,7 +9585,7 @@ describe('Actions', () => {
         expect(api.clinics.getClinicPatientCountSettings.callCount).to.equal(0);
       });
 
-      it('should trigger FETCH_CLINIC_PATIENT_COUNT_FAILURE and FETCH_CLINIC_PATIENT_COUNT_SETTINGS_FAILURE and it should call error once for a failed request', () => {
+      it('should trigger FETCH_CLINIC_PATIENT_COUNTS_FAILURE and FETCH_CLINIC_PATIENT_COUNT_SETTINGS_FAILURE and it should call error once for a failed request', () => {
         const clinicId = 'clinic123';
 
         let api = {
@@ -9277,7 +9599,7 @@ describe('Actions', () => {
           },
         };
 
-        let countErr = new Error(ErrorMessages.ERR_FETCHING_CLINIC_PATIENT_COUNT);
+        let countErr = new Error(ErrorMessages.ERR_FETCHING_CLINIC_PATIENT_COUNTS);
         countErr.status = 500;
 
         let settingsErr = new Error(ErrorMessages.ERR_FETCHING_CLINIC_PATIENT_COUNT_SETTINGS);
@@ -9285,10 +9607,10 @@ describe('Actions', () => {
 
         let expectedActions = [
           { type: 'SELECT_CLINIC_SUCCESS', payload: { clinicId } },
-          { type: 'FETCH_CLINIC_PATIENT_COUNT_REQUEST' },
+          { type: 'FETCH_CLINIC_PATIENT_COUNTS_REQUEST' },
           { type: 'FETCH_CLINIC_PATIENT_COUNT_SETTINGS_REQUEST' },
           {
-            type: 'FETCH_CLINIC_PATIENT_COUNT_FAILURE',
+            type: 'FETCH_CLINIC_PATIENT_COUNTS_FAILURE',
             error: countErr,
             meta: { apiError: { status: 500, body: 'Count Error!' } },
           },
@@ -9306,7 +9628,7 @@ describe('Actions', () => {
           ...initialState,
           clinics: {
             [clinicId]: {
-              patientCount: undefined,
+              patientCounts: undefined,
               patientCountSettings: undefined,
             },
           },
@@ -9319,7 +9641,7 @@ describe('Actions', () => {
         const actions = store.getActions();
 
         expect(actions[3].error).to.deep.include({
-          message: ErrorMessages.ERR_FETCHING_CLINIC_PATIENT_COUNT,
+          message: ErrorMessages.ERR_FETCHING_CLINIC_PATIENT_COUNTS,
         });
         expectedActions[3].error = actions[3].error;
 

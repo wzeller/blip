@@ -49,6 +49,7 @@ import Messages from '../../components/messages';
 import ChartDateRangeModal from '../../components/ChartDateRangeModal';
 import ChartDateModal from '../../components/ChartDateModal';
 import PrintDateRangeModal from '../../components/PrintDateRangeModal';
+import ExportModal from '../../components/ExportModal';
 import Button from '../../components/elements/Button';
 
 import ToastContext from '../../providers/ToastProvider';
@@ -62,7 +63,8 @@ import UploaderBanner from '../../components/elements/Card/Banners/Uploader.png'
 import ShareBanner from '../../components/elements/Card/Banners/Share.png';
 import DataConnectionsBanner from '../../components/elements/Card/Banners/DataConnections.png';
 import DataConnectionsModal from '../../components/datasources/DataConnectionsModal';
-import { DEFAULT_CGM_SAMPLE_INTERVAL, DEFAULT_CGM_SAMPLE_INTERVAL_RANGE, MS_IN_MIN } from '../../core/constants';
+import { DATA_DONATION_CONSENT_TYPE, DEFAULT_CGM_SAMPLE_INTERVAL, DEFAULT_CGM_SAMPLE_INTERVAL_RANGE, DIABETES_TYPES, MS_IN_MIN } from '../../core/constants';
+const { GLYCEMIC_RANGES_PRESET } = vizUtils.constants;
 
 const { Loader } = vizComponents;
 const { getLocalizedCeiling, getTimezoneFromTimePrefs } = vizUtils.datetime;
@@ -153,9 +155,6 @@ export const PatientDataClass = createReactClass({
           focusedSmbgRangeAvg: null,
           showingCbgDateTraces: false,
           touched: false,
-          stats: {
-            excludeDaysWithoutBolus: false,
-          },
         },
         bgLog: {
           bgSource: 'smbg',
@@ -175,6 +174,7 @@ export const PatientDataClass = createReactClass({
       datesDialogOpen: false,
       datesDialogProcessing: false,
       datesDialogFetchingData: false,
+      exportDialogOpen: false,
       printDialogOpen: false,
       printDialogProcessing: false,
       printDialogPDFOpts: null,
@@ -208,6 +208,7 @@ export const PatientDataClass = createReactClass({
     const patientData = this.renderPatientData();
     const messages = this.renderMessagesContainer();
     const datesDialog = this.renderDatesDialog();
+    const exportDialog = this.renderExportDialog();
     const printDialog = this.renderPrintDialog();
     const showLoader = this.isInitialProcessing() || this.state.transitioningChartType;
 
@@ -216,6 +217,7 @@ export const PatientDataClass = createReactClass({
         {messages}
         {patientData}
         {this.state.datesDialogOpen && datesDialog}
+        {exportDialog}
         {printDialog}
         <Loader show={showLoader} />
       </div>
@@ -443,6 +445,19 @@ export const PatientDataClass = createReactClass({
     );
   },
 
+  renderExportDialog: function() {
+    return (
+      <ExportModal
+        id="export-dialog"
+        api={this.props.api}
+        open={this.state.exportDialogOpen}
+        onClose={this.closeExportDialog}
+        trackMetric={this.props.trackMetric}
+        timePrefs={this.state.timePrefs}
+      />
+    );
+  },
+
   renderPrintDialog: function() {
     return (
       <PrintDateRangeModal
@@ -468,7 +483,7 @@ export const PatientDataClass = createReactClass({
 
           let setStateCallback = this.generatePDF;
 
-          if (startDate < fetchedUntil) {
+          if (startDate < fetchedUntil || !fetchedUntil) {
             this.fetchAdditionalData({
               returnData: false,
               showLoading: false,
@@ -529,6 +544,7 @@ export const PatientDataClass = createReactClass({
             onSwitchToTrends={this.handleSwitchToTrendsRoute}
             onSwitchToSettings={this.handleSwitchToSettingsRoute}
             onSwitchToBgLog={this.handleSwitchToBgLogRoute}
+            onClickExport={this.handleClickExport}
             onClickPrint={this.handleClickPrint}
             trackMetric={this.props.trackMetric}
             updateChartPrefs={this.updateChartPrefs}
@@ -565,10 +581,12 @@ export const PatientDataClass = createReactClass({
             loading={this.state.loading}
             onClickRefresh={this.handleClickRefresh}
             onClickNoDataRefresh={this.handleClickNoDataRefresh}
+            onClickExport={this.handleClickExport}
             onClickPrint={this.handleClickPrint}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             onClickChartDates={this.handleClickChartDates}
             patient={this.props.patient}
+            copyAsTextMetadata={this.getCopyAsTextMetadata()}
             permsOfLoggedInUser={this.props.permsOfLoggedInUser}
             aggregations={aggregations}
             stats={stats}
@@ -596,6 +614,7 @@ export const PatientDataClass = createReactClass({
             onClickRefresh={this.handleClickRefresh}
             onCreateMessage={this.handleShowMessageCreation}
             onShowMessageThread={this.handleShowMessageThread}
+            onClickExport={this.handleClickExport}
             onClickPrint={this.handleClickPrint}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             onClickChartDates={this.handleClickChartDates}
@@ -618,6 +637,7 @@ export const PatientDataClass = createReactClass({
         return (
           <Trends
             addingData={this.props.addingData}
+            copyAsTextMetadata={this.getCopyAsTextMetadata()}
             chartPrefs={this.state.chartPrefs}
             currentPatientInViewId={this.props.currentPatientInViewId}
             data={this.props.data}
@@ -625,6 +645,7 @@ export const PatientDataClass = createReactClass({
             loading={this.state.loading}
             mostRecentDatetimeLocation={this.state.mostRecentDatetimeLocation}
             onClickRefresh={this.handleClickRefresh}
+            onClickExport={this.handleClickExport}
             onClickPrint={this.handleClickPrint}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             patient={this.props.patient}
@@ -647,6 +668,7 @@ export const PatientDataClass = createReactClass({
           <BgLog
             addingData={this.props.addingData}
             chartPrefs={this.state.chartPrefs}
+            copyAsTextMetadata={this.getCopyAsTextMetadata()}
             data={this.props.data}
             initialDatetimeLocation={this.state.datetimeLocation}
             isClinicianAccount={personUtils.isClinicianAccount(this.props.user)}
@@ -654,6 +676,7 @@ export const PatientDataClass = createReactClass({
             mostRecentDatetimeLocation={this.state.mostRecentDatetimeLocation}
             onClickRefresh={this.handleClickRefresh}
             onClickNoDataRefresh={this.handleClickNoDataRefresh}
+            onClickExport={this.handleClickExport}
             onClickPrint={this.handleClickPrint}
             onUpdateChartDateRange={this.handleChartDateRangeUpdate}
             patient={this.props.patient}
@@ -674,77 +697,6 @@ export const PatientDataClass = createReactClass({
       case 'settings':
         return this.renderSettings();
     }
-  },
-
-  renderDefaultBgRangeCheckbox: function(props, state) {
-    const { t } = props;
-
-    return (
-      <Box p={2} sx={{
-        borderTop: '1px solid',
-        borderColor: 'grays.1',
-      }}>
-        <PopoverLabel
-          id="use-default-bg-range"
-          label={(
-            <Checkbox
-              checked={!!this.state.bgPrefs?.useDefaultRange}
-              label={t('Use default BG ranges')}
-              onChange={this.toggleDefaultBgRange}
-              themeProps={{
-                mb: 0,
-                sx: { color: 'stat.text' },
-              }}
-            />
-          )}
-          popoverContent={(
-            <Box p={3}>
-              <Paragraph2>
-                <strong>{t('This patient has set a custom BG target range.')}</strong>
-              </Paragraph2>
-              <Paragraph2>
-                {t('If this option is checked, the target ranges for this view will be updated to the default ranges.')}
-              </Paragraph2>
-            </Box>
-          )}
-        />
-      </Box>
-    );
-  },
-
-  renderExcludeEmptyBolusDaysCheckbox: function(props, state) {
-    const { t } = props;
-
-    return (
-      <Box p={2} sx={{
-        borderTop: '1px solid',
-        borderColor: 'grays.1',
-      }}>
-        <PopoverLabel
-          id="exclude-bolus-info"
-          label={(
-            <Checkbox
-              checked={_.get(state, ['chartPrefs', state.chartType, 'stats', 'excludeDaysWithoutBolus'])}
-              label={t('Exclude days with no boluses')}
-              onChange={this.toggleDaysWithoutBoluses}
-              themeProps={{
-                color: 'stat.text',
-              }}
-            />
-          )}
-          popoverContent={(
-            <Box p={3}>
-              <Paragraph2>
-                <strong>{t('Only some of the days within the current range contain bolus data.')}</strong>
-              </Paragraph2>
-              <Paragraph2>
-                {t('If this option is checked, days without boluses will be excluded when calculating this stat and the "Avg per day" count in the "Bolusing" calendar summary.')}
-              </Paragraph2>
-            </Box>
-          )}
-        />
-      </Box>
-    );
   },
 
   renderMessagesContainer: function() {
@@ -772,47 +724,6 @@ export const PatientDataClass = createReactClass({
           timePrefs={this.state.timePrefs} />
       );
     }
-  },
-
-  toggleDaysWithoutBoluses: function(e) {
-    if (e) {
-      e.preventDefault();
-    }
-
-    const prefs = _.cloneDeep(this.state.chartPrefs);
-    prefs[this.state.chartType].stats.excludeDaysWithoutBolus = !prefs[this.state.chartType].stats.excludeDaysWithoutBolus;
-    if (prefs[this.state.chartType].stats.excludeDaysWithoutBolus) this.props.trackMetric(`${_.capitalize(this.state.chartType)} exclude days without boluses`);
-    this.updateChartPrefs(prefs, false, true, true);
-  },
-
-  toggleDefaultBgRange: function(e, value) {
-    if (e) {
-      e.preventDefault();
-    }
-
-    const patientSettings = _.get(this.props, 'patient.settings', {});
-    let bgPrefs = this.state.bgPrefs || {};
-
-    const bgUnitsOverride = {
-      units: this.props.queryParams?.units || this.props.clinic?.preferredBgUnits,
-      source: this.props.queryParams?.units ? 'query params' : 'preferred clinic units',
-    };
-
-    if (!bgPrefs.useDefaultRange) {
-      bgPrefs = utils.getBGPrefsForDataProcessing({ ...patientSettings, bgTarget: undefined }, bgUnitsOverride);
-      bgPrefs.bgBounds = vizUtils.bg.reshapeBgClassesToBgBounds(bgPrefs);
-      bgPrefs.useDefaultRange = true;
-    } else {
-      bgPrefs = utils.getBGPrefsForDataProcessing(patientSettings, bgUnitsOverride);
-      bgPrefs.bgBounds = vizUtils.bg.reshapeBgClassesToBgBounds(bgPrefs);
-      bgPrefs.useDefaultRange = false;
-    }
-
-    if (bgPrefs.useDefaultRange) this.props.trackMetric(`${_.capitalize(this.state.chartType)} - use default BG range`);
-
-    this.setState({ bgPrefs }, () => {
-      this.updateChartPrefs({}, false, true, true);
-    });
   },
 
   closeDatesDialog: function() {
@@ -861,10 +772,6 @@ export const PatientDataClass = createReactClass({
         manufacturer,
       });
 
-      if (this.state.isCustomBgRange && !props.isUserPatient && _.includes(['timeInRange', 'readingsInRange'], statType)) {
-        stat.children = this.renderDefaultBgRangeCheckbox(props, state);
-      }
-
       if (statType === 'totalInsulin' && _.includes(['basics', 'trends'], chartType)) {
         // We nest the averageDailyDose stat within the totalInsulin stat
         stat.title = props.t('Avg. Daily Insulin Ratio');
@@ -872,9 +779,6 @@ export const PatientDataClass = createReactClass({
 
         delete stat.dataFormat.title;
         delete stat.data.dataPaths.title;
-
-        const activeDays = _.get(props, 'data.data.current.endpoints.activeDays');
-        const daysWithBoluses = _.keys(_.get(props, 'data.data.aggregationsByDate.boluses.byDate', {})).length;
 
         const averageDailyDoseStat = getStatDefinition(averageDailyDose, 'averageDailyDose', {
           bgSource,
@@ -911,18 +815,7 @@ export const PatientDataClass = createReactClass({
           </Box>
         );
 
-        if (state.chartType !== 'basics' && daysWithBoluses > 0 && daysWithBoluses < activeDays) {
-          // If any of the calendar dates within the range are missing boluses,
-          // present a checkbox to disable them from insulin stat calculations
-          stat.children = (
-            <React.Fragment>
-              {averageDailyDoseComponent}
-              {this.renderExcludeEmptyBolusDaysCheckbox(props, state)}
-            </React.Fragment>
-          )
-        } else {
-          stat.children = averageDailyDoseComponent;
-        }
+        stat.children = averageDailyDoseComponent;
       }
 
       stats.push(stat);
@@ -983,6 +876,8 @@ export const PatientDataClass = createReactClass({
     const combinedPatient = props.clinicPatient ? personUtils.combinedAccountAndClinicPatient(props.patient, props.clinicPatient) : null;
     const sourcePatient = personUtils.isClinicianAccount(props.user) && !!combinedPatient ? combinedPatient : props.patient;
 
+    const glycemicRanges = props.clinicPatient?.glycemicRanges || GLYCEMIC_RANGES_PRESET.ADA_STANDARD;
+
     const pdfPatient = _.assign({}, sourcePatient, {
       settings: _.assign({}, patientSettings, { siteChangeSource }),
     });
@@ -1002,7 +897,6 @@ export const PatientDataClass = createReactClass({
         aggregationsByDate: 'basals, boluses, fingersticks, siteChanges',
         bgSource: _.get(state.chartPrefs, 'basics.bgSource'),
         stats: this.getStatsByChartType('basics'),
-        excludeDaysWithoutBolus: false, // deprecated for basics chartType
         ...commonQueries,
       };
     }
@@ -1026,12 +920,15 @@ export const PatientDataClass = createReactClass({
         types: {
           basal: {},
           bolus: {},
+          insulin: {},
           cbg: {},
           deviceEvent: {},
           food: {},
           message: {},
           smbg: {},
           wizard: {},
+          physicalActivity: {},
+          reportedState: {},
         },
         bgSource: _.get(state.chartPrefs, 'daily.bgSource'),
         cgmSampleIntervalRange: _.get(state.chartPrefs, 'daily.cgmSampleIntervalRange'),
@@ -1046,6 +943,7 @@ export const PatientDataClass = createReactClass({
         bgSource: _.get(state.chartPrefs, 'agpBGM.bgSource'),
         stats: this.getStatsByChartType('agpBGM'),
         types: { smbg: {} },
+        glycemicRanges,
         ...commonQueries,
       };
     }
@@ -1057,6 +955,7 @@ export const PatientDataClass = createReactClass({
         bgSource: _.get(state.chartPrefs, 'agpCGM.bgSource'),
         stats: this.getStatsByChartType('agpCGM'),
         types: { cbg: {} },
+        glycemicRanges,
         ...commonQueries,
       };
     }
@@ -1088,10 +987,12 @@ export const PatientDataClass = createReactClass({
   handleChartDateRangeUpdate: function(datetimeLocation, forceChartDataUpdate = false) {
     const isDaily = this.state.chartType === 'daily';
     const isTrends = this.state.chartType === 'trends';
+    const isBasics = this.state.chartType === 'basics';
 
-    const newEndpoints = this.getChartEndpoints(datetimeLocation, {
-      setEndToLocalCeiling: forceChartDataUpdate || !isDaily,
-    });
+    const canSplitDays = isDaily || isTrends || isBasics;
+    const setEndToLocalCeiling = forceChartDataUpdate || !canSplitDays;
+
+    const newEndpoints = this.getChartEndpoints(datetimeLocation, { setEndToLocalCeiling });
 
     const endpointsChanged = newEndpoints && !_.isEqual(newEndpoints, this.state.endpoints);
     if (!endpointsChanged) return;
@@ -1304,12 +1205,17 @@ export const PatientDataClass = createReactClass({
       .toISOString();
 
     const mostRecentDatumTime = this.getMostRecentDatumTimeByChartType(this.props, chartType);
-    const dateCeiling = getLocalizedCeiling(mostRecentDatumTime, this.state.timePrefs);
-    const datetimeLocation = getDatetimeLocation(dateCeiling);
+    const hourCeiling = getLocalizedCeiling(mostRecentDatumTime, this.state.timePrefs, 'hour');
+    const datetimeLocation = getDatetimeLocation(hourCeiling);
 
     const updateOpts = { updateChartEndpoints: true };
 
-    this.updateChart(chartType, datetimeLocation, this.getChartEndpoints(datetimeLocation, { chartType }), updateOpts);
+    this.updateChart(
+      chartType,
+      datetimeLocation,
+      this.getChartEndpoints(datetimeLocation, { chartType, setEndToLocalCeiling: false }),
+      updateOpts
+    );
   },
 
   handleSwitchToDaily: function(datetime) {
@@ -1344,15 +1250,20 @@ export const PatientDataClass = createReactClass({
       .toISOString();
 
     const mostRecentDatumTime = this.getMostRecentDatumTimeByChartType(this.props, chartType);
-    const dateCeiling = getLocalizedCeiling(_.min([Date.parse(datetime), mostRecentDatumTime]), this.state.timePrefs);
-    const datetimeLocation = getDatetimeLocation(dateCeiling);
+    const hourCeiling = getLocalizedCeiling(_.min([Date.parse(datetime), mostRecentDatumTime]), this.state.timePrefs, 'hour');
+    const datetimeLocation = getDatetimeLocation(hourCeiling);
 
     const updateOpts = { updateChartEndpoints: true };
     if (datetime && mostRecentDatumTime) {
       updateOpts.mostRecentDatetimeLocation = getDatetimeLocation(mostRecentDatumTime)
     }
 
-    this.updateChart(chartType, datetimeLocation, this.getChartEndpoints(datetimeLocation, { chartType }), updateOpts);
+    this.updateChart(
+      chartType,
+      datetimeLocation,
+      this.getChartEndpoints(datetimeLocation, { chartType,  setEndToLocalCeiling: false }),
+      updateOpts
+    );
   },
 
   handleSwitchToBgLog: function(datetime) {
@@ -1395,6 +1306,15 @@ export const PatientDataClass = createReactClass({
     });
 
     this.updateChart('settings');
+  },
+
+  handleClickExport: function() {
+    this.props.trackMetric('Clicked Export', { fromChart: this.state.chartType });
+    this.setState({ exportDialogOpen: true });
+  },
+
+  closeExportDialog: function() {
+    this.setState({ exportDialogOpen: false });
   },
 
   handleClickPrint: function() {
@@ -1691,12 +1611,15 @@ export const PatientDataClass = createReactClass({
         latestDatums = getLatestDatums([
           'basal',
           'bolus',
+          'insulin',
           'cbg',
           'deviceEvent',
           'food',
           'message',
           'smbg',
           'wizard',
+          'reportedState',
+          'physicalActivity',
         ]);
         break;
 
@@ -1733,6 +1656,31 @@ export const PatientDataClass = createReactClass({
     return _.max(_.map(latestDatums, d => (d.normalEnd || d.normalTime)));
   },
 
+  getCopyAsTextMetadata: function () {
+    const { clinic, clinicPatient, patient, user } = this.props;
+
+    // User Type
+    const isClinicianAccount = personUtils.isClinicianAccount(user);
+
+    // Clinic Patient Details
+    const diagnosisType = clinicPatient?.diagnosisType || patient?.profile?.patient?.diagnosisType;
+    const diagnosisTypeLabel = DIABETES_TYPES().find(t => t.value === diagnosisType)?.label; // eslint-disable-line new-cap
+
+    // Tags
+    const patientTagIds = clinicPatient?.tags || [];
+    const patientTags = clinic?.patientTags?.filter(tag => patientTagIds.includes(tag.id)) || [];
+
+    // Sites
+    const patientSiteIds = clinicPatient?.sites?.map(s => s.id) || [];
+    const sites = clinic?.sites?.filter(site => patientSiteIds.includes(site.id)) || [];
+
+    return {
+      diagnosisTypeLabel,
+      patientTags: isClinicianAccount ? patientTags : [],
+      sites: isClinicianAccount ? sites: [],
+    };
+  },
+
   // Called via `window.loadPatientData` to populate global `patientData` object
   // Called via `window.downloadPatientData` to download data query result as `patientData.json`
   saveDataToDestination: function(destination, { query, raw = false } = {}) {
@@ -1746,6 +1694,7 @@ export const PatientDataClass = createReactClass({
         'size',
         'devices',
         'matchedDevices',
+        'dataAnnotations',
       ],
       types: '*',
       raw,
@@ -1789,6 +1738,10 @@ export const PatientDataClass = createReactClass({
     this.setState(state, cb);
   },
 
+  componentDidMount() {
+    window.scrollTo(0, 0);
+  },
+
   UNSAFE_componentWillMount: function() {
     this.doFetching(this.props);
     var params = this.props.queryParams;
@@ -1816,9 +1769,11 @@ export const PatientDataClass = createReactClass({
     const userId = this.props.currentPatientInViewId;
     const patientData = _.get(nextProps, 'data.metaData.patientId') === userId;
     const patientSettings = _.get(nextProps, ['patient', 'settings'], null);
+    const clinicPatient = _.get(nextProps.clinics, [nextProps.clinic?.id, 'patients', userId], {});
 
-    // Handle data refresh
-    if (this.props.removingData.inProgress && nextProps.removingData.completed) {
+    // Handle data refresh, assuming chartType is already set so that it can't trigger on initial load
+    // such as can happen if the data is being cleared upon exit from another view (e.g. TIDE drawer)
+    if (this.state.chartType && this.props.removingData.inProgress && nextProps.removingData.completed) {
       setTimeout(() => {
         this.setState({
           ...this.getInitialState(),
@@ -1857,8 +1812,9 @@ export const PatientDataClass = createReactClass({
           source: nextProps.queryParams?.units ? 'query params' : 'preferred clinic units',
         };
 
-        bgPrefs = utils.getBGPrefsForDataProcessing(patientSettings, bgUnitsOverride);
+        bgPrefs = utils.getBGPrefsForDataProcessing(patientSettings, clinicPatient, bgUnitsOverride);
         bgPrefs.bgBounds = vizUtils.bg.reshapeBgClassesToBgBounds(bgPrefs);
+
         if (isCustomBgRange(bgPrefs)) stateUpdates.isCustomBgRange = true;
         stateUpdates.bgPrefs = bgPrefs;
       }
@@ -2081,7 +2037,7 @@ export const PatientDataClass = createReactClass({
       showLoading: true,
       updateChartEndpoints: options.updateChartEndpoints || !this.state.chartEndpoints,
       transitioningChartType: false,
-      metaData: 'bgSources,devices,matchedDevices,excludedDevices,queryDataCount',
+      metaData: 'bgSources,devices,matchedDevices,excludedDevices,queryDataCount,dataAnnotations',
       bgSource: _.get(this.state, ['chartPrefs', this.state.chartType, 'bgSource']),
     });
 
@@ -2092,7 +2048,6 @@ export const PatientDataClass = createReactClass({
       bgSource: options.bgSource,
       chartType: this.state.chartType,
       excludedDevices: _.get(this.state, 'chartPrefs.excludedDevices', []),
-      excludeDaysWithoutBolus: _.get(this.state, ['chartPrefs', this.state.chartType, 'stats', 'excludeDaysWithoutBolus']),
       endpoints: this.state.endpoints,
       metaData: options.metaData,
       forceRemountAfterQuery: options.forceRemountAfterQuery,
@@ -2126,12 +2081,16 @@ export const PatientDataClass = createReactClass({
           chartQuery.types = {
             basal: {},
             bolus: {},
+            insulin: {},
             cbg: {},
             deviceEvent: {},
             food: {},
             message: {},
+            pumpSettings: {},
             smbg: {},
             wizard: {},
+            reportedState: {},
+            physicalActivity: {},
           };
 
           chartQuery.cgmSampleIntervalRange = _.get(this.state.chartPrefs, 'daily.cgmSampleIntervalRange');
@@ -2160,7 +2119,7 @@ export const PatientDataClass = createReactClass({
             pumpSettings: {},
             upload: {},
           };
-          chartQuery.endpoints[0] = 0;
+          chartQuery.endpoints = [0, moment().valueOf()]; // fetch all data
           break;
       }
 
@@ -2278,21 +2237,23 @@ export const PatientDataClass = createReactClass({
       const isBgLog = chartType === 'bgLog';
 
       const mostRecentDatumTime = this.getMostRecentDatumTimeByChartType(props, chartType);
-      const latestDatumDateCeiling = getLocalizedCeiling(mostRecentDatumTime, this.state.timePrefs);
+      const latestDatumHourCeiling = getLocalizedCeiling(mostRecentDatumTime, this.state.timePrefs, 'hour');
 
+      // If a datetime param is specified in URL, use that. Otherwise, use time of latest
+      // datum unless it is the daily view, in which case use the end of that date
       let datetimeLocation = _.get(props, 'queryParams.datetime', (isDaily || isBgLog)
-        ? moment.utc(latestDatumDateCeiling.valueOf())
+        ? moment.utc(latestDatumHourCeiling.valueOf())
           .tz(isDaily ? getTimezoneFromTimePrefs(this.state.timePrefs) : 'UTC')
           .subtract(12, 'hours')
           .toISOString()
-        : moment.utc(latestDatumDateCeiling.valueOf())
+        : moment.utc(latestDatumHourCeiling.valueOf())
           .toISOString());
 
       if (_.isInteger(_.toNumber(datetimeLocation))) {
         datetimeLocation = moment.utc(_.toNumber(datetimeLocation)).toISOString();
       }
 
-      const endpoints = this.getChartEndpoints(datetimeLocation, { chartType });
+      const endpoints = this.getChartEndpoints(datetimeLocation, { chartType, setEndToLocalCeiling: false });
 
       // Set the default bgSource for basics, daily, and trends charts
       this.updateChartPrefs({
@@ -2301,6 +2262,15 @@ export const PatientDataClass = createReactClass({
         trends: { ...this.state.chartPrefs.trends, bgSource },
         excludedDevices,
       }, false);
+
+      if (chartType === 'settings') {
+        this.fetchAdditionalData({
+          returnData: false,
+          showLoading: true,
+          noDates: true,
+          type: 'pumpSettings,upload',
+        });
+      }
 
       this.updateChart(chartType, datetimeLocation, endpoints);
       props.trackMetric(`web - default to ${chartType === 'bgLog' ? 'weekly' : chartType}`);
@@ -2433,6 +2403,8 @@ export const PatientData = withTranslation()(props => <PatientDataClass {...prop
  * Expose "Smart" Component that is connect-ed to Redux
  */
 export function getFetchers(dispatchProps, ownProps, stateProps, api, options) {
+  const isUserPatient = ownProps.match.params.id === stateProps.user?.userid;
+
   const fetchers = [
     dispatchProps.fetchPatient.bind(null, api, ownProps.match.params.id),
     dispatchProps.fetchPatientData.bind(null, api, options, ownProps.match.params.id),
@@ -2442,13 +2414,18 @@ export function getFetchers(dispatchProps, ownProps, stateProps, api, options) {
     fetchers.push(dispatchProps.fetchPendingSentInvites.bind(null, api));
   }
 
-  if (stateProps.isUserPatient && !stateProps.fetchingClinicsForPatient.inProgress && !stateProps.fetchingClinicsForPatient.completed) {
+  if (isUserPatient && !stateProps.fetchingClinicsForPatient.inProgress && !stateProps.fetchingClinicsForPatient.completed) {
     fetchers.push(dispatchProps.fetchClinicsForPatient.bind(null, api, ownProps.match.params.id));
   }
 
-  // Need fetchAssociatedAccounts here because the result includes of data donation accounts sharing info
+  // Need fetchAssociatedAccounts here because the result includes permissions for the patients in a care team
   if (!stateProps.fetchingAssociatedAccounts.inProgress && !stateProps.fetchingAssociatedAccounts.completed) {
     fetchers.push(dispatchProps.fetchAssociatedAccounts.bind(null, api));
+  }
+
+  // If the logged-in user is viewing their own profile, fetch their data donation consent records
+  if (isUserPatient && !stateProps.fetchingUserConsentRecords.inProgress && !stateProps.fetchingUserConsentRecords.completed) {
+    fetchers.push(dispatchProps.fetchUserConsentRecords.bind(null, api, DATA_DONATION_CONSENT_TYPE));
   }
 
   if (stateProps.selectedClinicId && !stateProps.fetchingPatientFromClinic.inProgress && !stateProps.fetchingPatientFromClinic.completed) {
@@ -2576,6 +2553,7 @@ export function mapStateToProps(state, props) {
     fetchingUser: state.blip.working.fetchingUser.inProgress,
     fetchingPendingSentInvites: state.blip.working.fetchingPendingSentInvites,
     fetchingAssociatedAccounts: state.blip.working.fetchingAssociatedAccounts,
+    fetchingUserConsentRecords: state.blip.working.fetchingUserConsentRecords,
     addingData: state.blip.working.addingData,
     removingData: state.blip.working.removingData,
     updatingDatum: state.blip.working.updatingDatum,
@@ -2597,6 +2575,7 @@ let mapDispatchToProps = dispatch => bindActionCreators({
   createMessageThread: actions.async.createMessageThread,
   editMessageThread: actions.async.editMessageThread,
   fetchAssociatedAccounts: actions.async.fetchAssociatedAccounts,
+  fetchUserConsentRecords: actions.async.fetchUserConsentRecords,
   fetchPatient: actions.async.fetchPatient,
   fetchPatientData: actions.async.fetchPatientData,
   fetchPatientFromClinic: actions.async.fetchPatientFromClinic,
@@ -2656,6 +2635,7 @@ let mergeProps = (stateProps, dispatchProps, ownProps) => {
     onSaveComment: api.team.replyToMessageThread.bind(api),
     onCreateMessage: dispatchProps.createMessageThread.bind(null, api),
     onEditMessage: dispatchProps.editMessageThread.bind(null, api),
+    api: api,
     trackMetric: ownProps.trackMetric,
     queryParams: ownProps.location.query,
     currentPatientInViewId: ownProps.match.params.id,

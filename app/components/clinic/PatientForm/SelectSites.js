@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { noop } from 'lodash';
 import utils from '../../../core/utils';
 
-import { selectElementStyleOverrides } from './SelectTags';
+import { selectElementStyleOverrides } from './styles';
 
 export const buildSelectOptions = (
   t,
@@ -53,7 +53,7 @@ const SelectSites = ({
   };
 
   // Suggest sites only if user is viewing ClinicPatients list (where Filters are used)
-  const shouldSuggestSites = pathname === '/clinic-workspace';
+  const shouldSuggestSites = pathname?.includes('/clinic-workspace');
 
   const selectOptions = buildSelectOptions(t, clinic?.sites, activeFilters, shouldSuggestSites);
 
