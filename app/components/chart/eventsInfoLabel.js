@@ -19,34 +19,38 @@ const EventsInfoLabel = props => {
       className="events-label-container"
       ml="44px"
       sx={{
-        alignItems: 'center',
+        flexDirection: 'column',
+        alignItems: 'flex-start',
         backgroundColor: 'white',
-        gap: 1,
         position: 'relative',
         top: '20px',
       }}
     >
-      <Box>
-        <Body1 sx={{ color: 'stat.text', fontWeight: 'bold' }}>{t('Events')}</Body1>
-      </Box>
+      <Flex sx={{ alignItems: 'center', gap: 1 }}>
+        <Box>
+          <Body1 sx={{ color: 'stat.text', fontWeight: 'bold' }}>{t('Events')}</Body1>
+        </Box>
 
-      {hasAlarmEventsInView && (
-        <Flex className='events-label-tooltip' sx={{ position: 'relative', alignItems: 'center' }}>
-          <Icon
-            icon={InfoOutlinedIcon}
-            label={t('Show events information')}
-            color="stat.text"
-            sx={{ fontSize: 1 }}
-            onMouseEnter={() => setShowTooltip(true)}
-            onMouseLeave={() => setShowTooltip(false)}
-          />
-          {showTooltip && (
-            <Box sx={{ zIndex: 1, position: 'relative' }}>
-              <EventsInfoTooltip position={{ top: 0, left: 0 }} />
-            </Box>
-          )}
-        </Flex>
-      )}
+        {hasAlarmEventsInView && (
+          <Flex className='events-label-tooltip' sx={{ position: 'relative', alignItems: 'center' }}>
+            <Icon
+              icon={InfoOutlinedIcon}
+              label={t('Show events information')}
+              color="stat.text"
+              sx={{ fontSize: 1 }}
+              onMouseEnter={() => setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+            />
+            {showTooltip && (
+              <Box sx={{ zIndex: 1, position: 'relative' }}>
+                <EventsInfoTooltip position={{ top: 0, left: 0 }} />
+              </Box>
+            )}
+          </Flex>
+        )}
+      </Flex>
+
+      {props.children}
     </Flex>
   );
 };

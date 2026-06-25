@@ -47,6 +47,57 @@ const EventTooltip = vizComponents.EventTooltip;
 import Header from './header';
 import CgmSampleIntervalRangeToggle from './cgmSampleIntervalRangeToggle';
 import EventsInfoLabel from './eventsInfoLabel';
+import TimezoneInViewLabel, { formatOffset } from './tzInViewDebug';
+import HelpOutlineRoundedIcon from '@material-ui/icons/HelpOutlineRounded';
+import Icon from '../elements/Icon';
+
+// EXPERIMENT (tz-in-view): helpers to re-base the whole daily view to a single uniform
+// timezone offset (minutes east of UTC, Tidepool convention e.g. US/Eastern EDT = -240).
+const MS_IN_MIN = 60000;
+
+// Map a fixed offset (minutes) to a zone name. Etc/GMT uses POSIX sign inversion and only
+// supports whole-hour offsets; non-whole-hour offsets fall back to UTC (ticks/data still use
+// the exact displayOffset, so only the secondary sticky-day-label may be slightly off).
+const offsetToZoneName = offsetMin => {
+  if (offsetMin % 60 === 0) {
+    const hours = -offsetMin / 60;
+    return `Etc/GMT${hours >= 0 ? '+' : '-'}${Math.abs(hours)}`;
+  }
+  return 'UTC';
+};
+
+// Return a copy of the chart data re-based so the whole view renders at `targetOffset`.
+// Data points keep their true UTC normalTime and just get a uniform displayOffset; fill
+// (grid) segments are shifted by (defaultOffset - targetOffset) so the 3-hour grid and day
+// boundaries re-align to the target offset's midnight, then get the uniform displayOffset.
+const rebaseChartData = (data, targetOffset, defaultOffset) => {
+  const combined = _.get(data, 'data.combined');
+  if (!combined || !_.isFinite(targetOffset) || !_.isFinite(defaultOffset)) return data;
+  const fillShift = (defaultOffset - targetOffset) * MS_IN_MIN;
+
+  const newCombined = _.map(combined, d => {
+    if (d.type === 'fill') {
+      const normalTime = d.normalTime + fillShift;
+      const duration = _.isFinite(d.duration) ? d.duration : (d.normalEnd - d.normalTime);
+      const localTime = normalTime + targetOffset * MS_IN_MIN;
+      return {
+        ...d,
+        normalTime,
+        normalEnd: normalTime + duration,
+        displayOffset: targetOffset,
+        fillDate: new Date(localTime).toISOString().slice(0, 10),
+        id: `fill_${new Date(normalTime).toISOString().replace(/[^\w\s]|_/g, '')}`,
+      };
+    }
+    return { ...d, displayOffset: targetOffset };
+  });
+
+  return {
+    ...data,
+    data: { ...data.data, combined: newCombined },
+    timePrefs: { ...data.timePrefs, timezoneAware: true, timezoneName: offsetToZoneName(targetOffset) },
+  };
+};
 import { DEFAULT_CGM_SAMPLE_INTERVAL_RANGE } from '../../core/constants';
 
 const DailyChart = withTranslation(null, { withRef: true })(class DailyChart extends Component {
@@ -282,6 +333,10 @@ class Daily extends Component {
       atMostRecent: false,
       endpoints: [],
       hasAlarmEventsInView: null,
+      tzInView: null,
+      appliedOffset: null,
+      showTzTooltip: false,
+      showTzDebug: true,
       initialDatetimeLocation: this.props.initialDatetimeLocation,
       inTransition: false,
       title: '',
@@ -295,10 +350,26 @@ class Daily extends Component {
     const newDataRecieved = this.props.queryDataCount !== nextProps.queryDataCount;
     const newEndpointsReceived = this.props.data?.data?.current?.endpoints !== nextProps.data?.data?.current?.endpoints;
 
+    // EXPERIMENT (tz-in-view): recompute the in-view timezone summary and the target display
+    // offset whenever the visible window changes. appliedOffset is the uniform offset the chart
+    // is re-based to (null = use the status-quo default tz).
+    let nextTzInView = this.state.tzInView;
+    let nextAppliedOffset = this.state.appliedOffset;
+    if (nextProps.data?.data?.combined && (this.state.tzInView === null || newEndpointsReceived)) {
+      nextTzInView = this.computeTzInView(nextProps.data);
+      nextAppliedOffset = this.getTargetOffset(nextTzInView);
+      const stateUpdates = {};
+      if (!_.isEqual(nextTzInView, this.state.tzInView)) stateUpdates.tzInView = nextTzInView;
+      if (nextAppliedOffset !== this.state.appliedOffset) stateUpdates.appliedOffset = nextAppliedOffset;
+      if (!_.isEmpty(stateUpdates)) this.setState(stateUpdates);
+    }
+
     if (this.chartRef.current) {
       const updates = {};
       if (loadingJustCompleted || newDataAdded || dataUpdated || newDataRecieved) {
-        updates.data = nextProps.data;
+        const effective = this.getEffectiveData(nextProps.data, nextAppliedOffset, nextTzInView);
+        updates.data = effective.data;
+        updates.timePrefs = effective.timePrefs;
         updates.editedCarbs = _.some(
           _.get(nextProps, 'data.data.combined'),
           d => d.type === 'food' && (d.tags?.carbsEdited === true || d.tags?.entryTimeDiffers === true)
@@ -317,6 +388,81 @@ class Daily extends Component {
         this.setState({ hasAlarmEventsInView });
       }
     }
+
+  };
+
+  // EXPERIMENT (tz-in-view): render the 24h window in the offset held by the plurality of
+  // in-view data (largest group wins). Re-base whenever that differs from the status-quo
+  // default; null means the plurality already matches the default (no re-base needed).
+  getTargetOffset = tzInView => {
+    if (!tzInView || !tzInView.mostPrevalent) return null;
+    const defaultOffset = tzInView.displayOffset;
+    if (!_.isFinite(defaultOffset)) return null;
+    return tzInView.mostPrevalent.offset !== defaultOffset ? tzInView.mostPrevalent.offset : null;
+  };
+
+  // EXPERIMENT (tz-in-view): return the data/timePrefs the chart should render. When an offset
+  // is applied, re-base a (memoized) copy; otherwise pass the original through unchanged.
+  getEffectiveData = (data, appliedOffset, tzInView) => {
+    if (appliedOffset === null) return { data, timePrefs: _.get(data, 'timePrefs') };
+    const cache = this._effectiveCache;
+    if (cache && cache.srcData === data && cache.offset === appliedOffset) return cache.result;
+    const defaultOffset = _.get(tzInView, 'displayOffset', _.get(this.computeTzInView(data), 'displayOffset'));
+    const rebased = rebaseChartData(data, appliedOffset, defaultOffset);
+    const result = { data: rebased, timePrefs: _.get(rebased, 'timePrefs') };
+    this._effectiveCache = { srcData: data, offset: appliedOffset, result };
+    return result;
+  };
+
+  // EXPERIMENT (tz-in-view): when the applied offset changes, redraw the chart in place
+  // (rerenderChart() reads this.props, which already carries the re-based data/timePrefs).
+  componentDidUpdate = (prevProps, prevState) => {
+    if (prevState.appliedOffset !== this.state.appliedOffset) {
+      this.chartRef.current?.rerenderChart();
+    }
+  };
+
+  // EXPERIMENT (tz-in-view): summarize timezoneOffsets of data in the visible window.
+  computeTzInView = data => {
+    const combined = _.get(data, 'data.combined');
+    const range = _.get(data, 'data.current.endpoints.range');
+    if (!combined || !range) return null;
+
+    const [start, end] = range;
+    const inView = _.filter(combined, d =>
+      _.isFinite(d.timezoneOffset) && d.normalTime >= start && d.normalTime <= end
+    );
+
+    const byOffset = {};
+    _.forEach(inView, d => {
+      if (!byOffset[d.timezoneOffset]) {
+        byOffset[d.timezoneOffset] = { offset: d.timezoneOffset, count: 0, timezones: new Set() };
+      }
+      byOffset[d.timezoneOffset].count += 1;
+      if (d.timezone) byOffset[d.timezoneOffset].timezones.add(d.timezone);
+    });
+
+    const rows = _.orderBy(
+      _.map(byOffset, o => ({ offset: o.offset, count: o.count, timezones: Array.from(o.timezones) })),
+      ['count', 'offset'],
+      ['desc', 'asc']
+    );
+
+    const timePrefs = _.get(data, 'timePrefs', {});
+    const displayTimezone = timePrefs.timezoneAware ? timePrefs.timezoneName : null;
+    const center = (start + end) / 2;
+    const displayOffset = displayTimezone
+      ? sundial.getOffsetFromZone(new Date(center).toISOString(), displayTimezone)
+      : NaN;
+
+    return {
+      total: inView.length,
+      displayTimezone,
+      displayOffset,
+      rows,
+      mostPrevalent: rows[0] || null,
+      mixed: rows.length > 1,
+    };
   };
 
   componentWillUnmount = () => {
@@ -327,6 +473,11 @@ class Daily extends Component {
     const timePrefs = _.get(this.props, 'data.timePrefs', {});
     const bgPrefs = _.get(this.props, 'data.bgPrefs', {});
     const dataQueryComplete = _.get(this.props, 'data.query.chartType') === 'daily';
+
+    // EXPERIMENT (tz-in-view): hover tooltips (bolus/cbg/smbg/carb/etc.) format their time
+    // from timePrefs, so they must use the re-based timePrefs when an offset is applied.
+    // Falls back to the original timePrefs when nothing is re-based.
+    const effectiveTimePrefs = this.getEffectiveData(this.props.data, this.state.appliedOffset, this.state.tzInView).timePrefs || timePrefs;
 
     return (
       <div id="tidelineMain" className="daily">
@@ -405,7 +556,7 @@ class Daily extends Component {
             side={this.state.hoveredBolus.side}
             bolus={this.state.hoveredBolus.data}
             bgPrefs={bgPrefs}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
           />}
           {this.state.hoveredSMBG && <SMBGTooltip
             position={{
@@ -414,7 +565,7 @@ class Daily extends Component {
             }}
             side={this.state.hoveredSMBG.side}
             smbg={this.state.hoveredSMBG.data}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
             bgPrefs={bgPrefs}
           />}
           {this.state.hoveredCBG && <CBGTooltip
@@ -424,7 +575,7 @@ class Daily extends Component {
             }}
             side={this.state.hoveredCBG.side}
             cbg={this.state.hoveredCBG.data}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
             bgPrefs={bgPrefs}
           />}
           {this.state.hoveredCarb && <FoodTooltip
@@ -435,7 +586,7 @@ class Daily extends Component {
             side={this.state.hoveredCarb.side}
             food={this.state.hoveredCarb.data}
             bgPrefs={bgPrefs}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
           />}
           {this.state.hoveredPumpSettingsOverride && <PumpSettingsOverrideTooltip
             position={{
@@ -445,7 +596,7 @@ class Daily extends Component {
             side={this.state.hoveredPumpSettingsOverride.side}
             override={this.state.hoveredPumpSettingsOverride.data}
             bgPrefs={bgPrefs}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
           />}
           {this.state.hoveredAlarm && <AlarmTooltip
             position={{
@@ -458,7 +609,7 @@ class Daily extends Component {
             }}
             side={this.state.hoveredAlarm.side}
             alarm={this.state.hoveredAlarm.data}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
           />}
           {this.state.hoveredEvent && <EventTooltip
             position={{
@@ -471,7 +622,7 @@ class Daily extends Component {
             }}
             side={this.state.hoveredEvent.side}
             event={this.state.hoveredEvent.data}
-            timePrefs={timePrefs}
+            timePrefs={effectiveTimePrefs}
           />}
           <WindowSizeListener onResize={this.handleWindowResize} />
         </Box>
@@ -483,6 +634,10 @@ class Daily extends Component {
     const timePrefs = _.get(this.props, 'data.timePrefs', {});
     const bgPrefs = _.get(this.props, 'data.bgPrefs', {});
     const carbUnits = ['grams'];
+
+    // EXPERIMENT (tz-in-view): the chart renders re-based data/timePrefs when an offset is
+    // applied; the rest of the page (stats, header) stays on the default tz.
+    const effectiveChart = this.getEffectiveData(this.props.data, this.state.appliedOffset, this.state.tzInView);
     const showingCgmData = _.get(this.props, 'chartPrefs.daily.bgSource')  === 'cbg';
 
     const {
@@ -522,7 +677,36 @@ class Daily extends Component {
             zIndex: 1,
           }}
         >
-          <EventsInfoLabel hasAlarmEventsInView={this.state.hasAlarmEventsInView} />
+          <EventsInfoLabel hasAlarmEventsInView={this.state.hasAlarmEventsInView}>
+            {this.renderTzSubnote()}
+          </EventsInfoLabel>
+
+          {this.state.showTzDebug ? (
+            <TimezoneInViewLabel
+              summary={this.state.tzInView}
+              onHide={() => this.setState({ showTzDebug: false })}
+            />
+          ) : (
+            <Box
+              as="button"
+              type="button"
+              onClick={() => this.setState({ showTzDebug: true })}
+              sx={{
+                fontFamily: 'monospace',
+                fontSize: 0,
+                bg: '#fffbe6',
+                border: '1px solid #e0c040',
+                borderRadius: '4px',
+                px: 2,
+                py: '2px',
+                color: '#8a6d00',
+                cursor: 'pointer',
+                '&:hover': { color: '#5a4700' },
+              }}
+            >
+              tz ▸
+            </Box>
+          )}
 
           {/* TODO: re-enable CgmSampleIntervalRangeToggle once twiist data issue is resolved */}
           {/* {showingCgmData && hasOneMinCgmSampleIntervalDevice && (
@@ -543,11 +727,11 @@ class Daily extends Component {
             bgUnits={bgPrefs.bgUnits}
             bolusRatio={this.props.chartPrefs.bolusRatio}
             carbUnits={carbUnits}
-            data={this.props.data}
+            data={effectiveChart.data}
             dynamicCarbs={this.props.chartPrefs.dynamicCarbs}
             editedCarbs={hasEditedCarbs}
             initialDatetimeLocation={this.props.initialDatetimeLocation}
-            timePrefs={timePrefs}
+            timePrefs={effectiveChart.timePrefs || timePrefs}
             // message handlers
             onCreateMessage={this.props.onCreateMessage}
             onShowMessageThread={this.props.onShowMessageThread}
@@ -578,12 +762,86 @@ class Daily extends Component {
     );
   }
 
+  // EXPERIMENT (tz-in-view): small always-on offset note under the date (e.g. "UTC-7") with a
+  // hover/focus tooltip explaining which offset is displayed and why. Caution-styled when the
+  // 24h window spans more than one timezone.
+  renderTzSubnote = () => {
+    const tzInView = this.state.tzInView;
+    const displayedOffset = this.state.appliedOffset !== null
+      ? this.state.appliedOffset
+      : _.get(tzInView, 'displayOffset');
+    if (!_.isFinite(displayedOffset)) return null;
+
+    const mixed = !!tzInView?.mixed;
+    const offsetLabel = formatOffset(displayedOffset);
+    const offsets = _.map(_.get(tzInView, 'rows', []), r => formatOffset(r.offset)).join(', ');
+
+    let why;
+    if (mixed) {
+      why = `This 24-hour window spans multiple time zones (${offsets}). Showing ${offsetLabel}, the majority of the data in view.`;
+    } else if (this.state.appliedOffset !== null) {
+      why = `Showing ${offsetLabel}, the timezone of all data in this 24-hour window.`;
+    } else {
+      why = `Showing ${offsetLabel}, your default timezone (the timezone of your most recent data).`;
+    }
+
+    const show = () => this.setState({ showTzTooltip: true });
+    const hide = () => this.setState({ showTzTooltip: false });
+
+    return (
+      <Flex
+        sx={{ position: 'relative', alignItems: 'center', justifyContent: 'flex-start', gap: 1, mt: '1px', fontSize: '11px', color: mixed ? '#946C00' : '#6d6d6d' }}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+      >
+        <Box as="span" sx={{ fontWeight: mixed ? 'bold' : 'normal' }}>{offsetLabel}</Box>
+        <Icon
+          icon={HelpOutlineRoundedIcon}
+          label="Timezone information"
+          cursor="help"
+          onFocus={show}
+          onBlur={hide}
+          sx={{ fontSize: '14px', color: mixed ? '#C28A00' : '#9b9b9b', '&:hover': { color: mixed ? '#946C00' : '#6d6d6d' } }}
+        />
+        {this.state.showTzTooltip && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              zIndex: 2,
+              width: '240px',
+              p: 2,
+              fontSize: '11px',
+              fontWeight: 'normal',
+              lineHeight: 1.45,
+              color: '#33404d',
+              bg: 'white',
+              border: '1px solid',
+              borderColor: mixed ? '#e0c040' : '#d8d8d8',
+              borderRadius: '6px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              textAlign: 'left',
+              whiteSpace: 'normal',
+            }}
+          >
+            {why}
+          </Box>
+        )}
+      </Flex>
+    );
+  };
+
   getTitle = datetime => {
     const { t } = this.props;
     const timePrefs = _.get(this.props, 'data.timePrefs', {});
     let timezone;
 
-    if (!timePrefs.timezoneAware) {
+    // EXPERIMENT (tz-in-view): when re-based to a uniform offset, title the day in that zone.
+    if (this.state.appliedOffset !== null) {
+      timezone = offsetToZoneName(this.state.appliedOffset);
+    }
+    else if (!timePrefs.timezoneAware) {
       timezone = 'UTC';
     }
     else {
