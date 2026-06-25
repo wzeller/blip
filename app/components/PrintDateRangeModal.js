@@ -51,6 +51,7 @@ export const PrintDateRangeModal = (props) => {
 
   const enabledChartsLocalKey = `${loggedInUserId}_PDFChartsEnabled`;
   const defaultRangesLocalKey = `${loggedInUserId}_PDFChartsSelectedRangeIndices`;
+  const dailyOptionsLocalKey = `${loggedInUserId}_PDFDailyOptions`;
 
   const endOfToday = useMemo(() => moment.utc().tz(timezoneName).endOf('day').subtract(1, 'ms'), [open]);
 
@@ -152,6 +153,7 @@ export const PrintDateRangeModal = (props) => {
 
   const [dates, setDates] = useState(defaults.dates);
   const [enabled, setEnabled] = useLocalStorage(enabledChartsLocalKey, defaults.enabled, true);
+  const [dailyOptions, setDailyOptions] = useLocalStorage(dailyOptionsLocalKey, { showTimezone: true }, true);
   const [errors, setErrors] = useState(defaults.errors);
   const [submitted, setSubmitted] = useState(defaults.submitted);
   const [datePickerOpen, setDatePickerOpen] = useState(defaults.datePickerOpen);
@@ -295,7 +297,7 @@ export const PrintDateRangeModal = (props) => {
       agpCGM: { endpoints: formatDateEndpoints(dates.agpCGM), disabled: !enabled.agpCGM },
       basics: { endpoints: formatBasicsDateEndpoints(dates.basics), disabled: !enabled.basics },
       bgLog: { endpoints: formatDateEndpoints(dates.bgLog), disabled: !enabled.bgLog },
-      daily: { endpoints: formatDateEndpoints(dates.daily), disabled: !enabled.daily },
+      daily: { endpoints: formatDateEndpoints(dates.daily), disabled: !enabled.daily, showTimezone: dailyOptions.showTimezone },
       settings: { disabled: !enabled.settings },
     };
 
@@ -445,6 +447,23 @@ export const PrintDateRangeModal = (props) => {
                       }
                     </Flex>
                   </Box>
+
+                  {panel.key === 'daily' && (
+                    <Flex mt={3} sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Box mr={3}>
+                        <Body0>{t('Display time zones')}</Body0>
+                        <Caption sx={{ color: 'text.primaryGrey' }}>
+                          {t('Show the time zone for each day and split days that span more than one.')}
+                        </Caption>
+                      </Box>
+                      <Switch
+                        theme={baseTheme}
+                        name="daily-show-timezone"
+                        checked={dailyOptions.showTimezone}
+                        onClick={() => setDailyOptions({ ...dailyOptions, showTimezone: !dailyOptions.showTimezone })}
+                      />
+                    </Flex>
+                  )}
                 </Box>
               )}
             </Box>
