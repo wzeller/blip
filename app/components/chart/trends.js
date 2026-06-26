@@ -79,6 +79,7 @@ const Trends = withTranslation()(class Trends extends PureComponent {
       inTransition: false,
       title: '',
       visibleDays: 0,
+      showTzBinDebug: true,
     };
 
     this.getNewDomain = this.getNewDomain.bind(this);
@@ -468,6 +469,77 @@ const Trends = withTranslation()(class Trends extends PureComponent {
     this.props.updateChartPrefs(prefs);
   }
 
+  // EXPERIMENT (tz-by-bin): debug panel showing, per 30-min time-of-day bin (binned by
+  // device time), the share of CGM readings from each timezone offset.
+  renderTzBinDebug() {
+    const cbg = _.get(this.props, 'data.data.current.data.cbg', []);
+    if (!cbg.length) return null;
+
+    const BIN = 30 * 60 * 1000;
+    const fmtTime = (ms) => {
+      const h = Math.floor(ms / 3600000);
+      const m = Math.floor((ms % 3600000) / 60000);
+      return `${_.padStart(String(h), 2, '0')}:${_.padStart(String(m), 2, '0')}`;
+    };
+    const fmtOff = (o) => {
+      const n = Number(o);
+      if (!_.isFinite(n)) return '—';
+      const sign = n < 0 ? '-' : '+';
+      const ah = Math.floor(Math.abs(n) / 60);
+      const am = Math.abs(n) % 60;
+      return `UTC${sign}${ah}${am ? `:${_.padStart(String(am), 2, '0')}` : ''}`;
+    };
+
+    const bins = {};
+    _.each(cbg, (d) => {
+      const tod = _.isFinite(d.deviceMsPer24) ? d.deviceMsPer24 : d.msPer24;
+      if (!_.isFinite(tod)) return;
+      const binStart = Math.floor(tod / BIN) * BIN;
+      if (!bins[binStart]) bins[binStart] = { binStart, total: 0, counts: {} };
+      bins[binStart].total += 1;
+      bins[binStart].counts[d.timezoneOffset] = (bins[binStart].counts[d.timezoneOffset] || 0) + 1;
+    });
+    const rows = _.sortBy(_.values(bins), 'binStart');
+
+    if (!this.state.showTzBinDebug) {
+      return (
+        <Box
+          as="button"
+          type="button"
+          onClick={() => this.setState({ showTzBinDebug: true })}
+          sx={{ position: 'absolute', top: '8px', right: '8px', zIndex: 2, fontFamily: 'monospace', fontSize: 0, bg: '#fffbe6', border: '1px solid #e0c040', borderRadius: '4px', px: 2, py: '2px', color: '#8a6d00', cursor: 'pointer' }}
+        >
+          tz bins ▸
+        </Box>
+      );
+    }
+
+    return (
+      <Box sx={{ position: 'absolute', top: '8px', right: '8px', zIndex: 2, width: '240px', maxHeight: '360px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '10px', lineHeight: 1.4, bg: '#fffbe6', border: '1px solid #e0c040', borderRadius: '4px', p: 2 }}>
+        <Flex sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <b>tz by bin (device time)</b>
+          <Box
+            as="button"
+            type="button"
+            onClick={() => this.setState({ showTzBinDebug: false })}
+            sx={{ border: 'none', background: 'none', cursor: 'pointer', color: '#8a6d00', fontSize: 1, lineHeight: 1, p: 0 }}
+          >
+            ×
+          </Box>
+        </Flex>
+        {rows.map((r) => {
+          const offs = _.orderBy(_.toPairs(r.counts), (p) => p[1], 'desc');
+          const mixed = offs.length > 1;
+          return (
+            <Box key={r.binStart} sx={{ color: mixed ? '#946C00' : '#555', fontWeight: mixed ? 'bold' : 'normal' }}>
+              {fmtTime(r.binStart)}  {offs.map(([o, c]) => `${fmtOff(o)} ${Math.round((c / r.total) * 100)}%`).join('  ')}
+            </Box>
+          );
+        })}
+      </Box>
+    );
+  }
+
   render() {
     const { currentPatientInViewId, t } = this.props;
     const dataQueryComplete = _.get(this.props, 'data.query.chartType') === 'trends';
@@ -507,6 +579,7 @@ const Trends = withTranslation()(class Trends extends PureComponent {
 
               <div id="tidelineContainer" className="patient-data-chart-trends">
                 {dataQueryComplete && this.renderChart()}
+                {dataQueryComplete && this.renderTzBinDebug()}
                 {dataQueryComplete && this.renderFocusedCbgDateTraceLabel()}
                 {dataQueryComplete && this.renderFocusedSMBGPointLabel()}
                 {dataQueryComplete && this.renderFocusedRangeLabels()}

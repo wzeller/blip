@@ -337,6 +337,7 @@ class Daily extends Component {
       appliedOffset: null,
       showTzTooltip: false,
       showTzDebug: true,
+      hideTzSubnote: false,
       initialDatetimeLocation: this.props.initialDatetimeLocation,
       inTransition: false,
       title: '',
@@ -414,13 +415,10 @@ class Daily extends Component {
     return result;
   };
 
-  // EXPERIMENT (tz-in-view): when the applied offset changes, redraw the chart in place
-  // (rerenderChart() reads this.props, which already carries the re-based data/timePrefs).
-  componentDidUpdate = (prevProps, prevState) => {
-    if (prevState.appliedOffset !== this.state.appliedOffset) {
-      this.chartRef.current?.rerenderChart();
-    }
-  };
+  // EXPERIMENT (tz-in-view): the re-base is applied through the data-update path in
+  // UNSAFE_componentWillReceiveProps (which re-renders with the re-based data/timePrefs on each
+  // navigation requery). We intentionally do NOT rerender the chart on every appliedOffset
+  // change here — doing so remounts/re-locates the chart mid-scroll and breaks back-scrolling.
 
   // EXPERIMENT (tz-in-view): summarize timezoneOffsets of data in the visible window.
   computeTzInView = data => {
@@ -766,6 +764,7 @@ class Daily extends Component {
   // hover/focus tooltip explaining which offset is displayed and why. Caution-styled when the
   // 24h window spans more than one timezone.
   renderTzSubnote = () => {
+    if (this.state.hideTzSubnote) return null;
     const tzInView = this.state.tzInView;
     const displayedOffset = this.state.appliedOffset !== null
       ? this.state.appliedOffset
@@ -826,6 +825,24 @@ class Daily extends Component {
             }}
           >
             {why}
+            <Box
+              as="button"
+              type="button"
+              onClick={() => this.setState({ hideTzSubnote: true, showTzTooltip: false })}
+              sx={{
+                mt: 2,
+                display: 'block',
+                p: 0,
+                border: 'none',
+                background: 'none',
+                color: '#0e7ec5',
+                fontSize: '11px',
+                textDecoration: 'underline',
+                cursor: 'pointer',
+              }}
+            >
+              Hide time zone display
+            </Box>
           </Box>
         )}
       </Flex>
@@ -939,11 +956,21 @@ class Daily extends Component {
       title: this.getTitle(datetimeLocationEndpoints[1]),
     });
 
+    // EXPERIMENT (tz-in-view): when the chart is re-based to a different offset, it reports its
+    // window in that re-based timezone. The data/fetch layer works in the document timezone, so
+    // translate the datetime back before handing it off — otherwise lazy boundary fetches (and
+    // the chart date range) are misaligned by the offset difference.
+    const endDate = datetimeLocationEndpoints[0].end;
+    const defaultOffset = _.get(this.state.tzInView, 'displayOffset');
+    const endIso = (this.state.appliedOffset !== null && _.isFinite(defaultOffset))
+      ? new Date(endDate.valueOf() + (this.state.appliedOffset - defaultOffset) * MS_IN_MIN).toISOString()
+      : endDate.toISOString();
+
     // Update the chart date range in the data component.
     // We debounce this to avoid excessive updates while panning the view.
     // The debounced function is a stable instance property so that rapid-fire D3 'navigated'
     // events (emitted on every animation frame during a pan) correctly cancel each other.
-    this.debouncedDateRangeUpdate(datetimeLocationEndpoints[0].end.toISOString());
+    this.debouncedDateRangeUpdate(endIso);
   };
 
   handleInTransition = inTransition => {
