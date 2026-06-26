@@ -256,7 +256,11 @@ module.exports = {
       logging: 'info',
       overlay: {
         runtimeErrors: (error) => {
-          if(error.name === 'LaunchDarklyFlagFetchError') {
+          // Suppress non-fatal LaunchDarkly init/fetch errors that occur when running
+          // locally without a valid LD client-side ID (empty launchDarklyClientToken).
+          // The app still runs on bootstrapped default flags + localStorage overrides.
+          if (error.name === 'LaunchDarklyFlagFetchError'
+            || error.name === 'LaunchDarklyInvalidEnvironmentIdError') {
             return false;
           }
           return true;
