@@ -98,6 +98,27 @@ const rebaseChartData = (data, targetOffset, defaultOffset) => {
     timePrefs: { ...data.timePrefs, timezoneAware: true, timezoneName: offsetToZoneName(targetOffset) },
   };
 };
+
+// EXPERIMENT (tz-in-view): position each datum at its OWN device-local time by shifting its
+// normalTime by (timezoneOffset - displayOffset). The chart window and timePrefs are left
+// unchanged (so navigation/scroll stays stable in the document timezone); on a day that spans
+// multiple offsets this naturally produces overlaps and gaps. Datum tooltips, which format
+// normalTime with the (unchanged) display timePrefs, then read out as the datum's device time.
+const toDeviceTimeData = data => {
+  const combined = _.get(data, 'data.combined');
+  if (!combined) return data;
+
+  const newCombined = _.map(combined, d => {
+    if (!_.isFinite(d.timezoneOffset) || !_.isFinite(d.displayOffset)) return d;
+    const shift = (d.timezoneOffset - d.displayOffset) * MS_IN_MIN;
+    if (!shift) return d;
+    const out = { ...d, normalTime: d.normalTime + shift };
+    if (_.isFinite(d.normalEnd)) out.normalEnd = d.normalEnd + shift;
+    return out;
+  });
+
+  return { ...data, data: { ...data.data, combined: newCombined } };
+};
 import { DEFAULT_CGM_SAMPLE_INTERVAL_RANGE } from '../../core/constants';
 
 const DailyChart = withTranslation(null, { withRef: true })(class DailyChart extends Component {
@@ -392,26 +413,21 @@ class Daily extends Component {
 
   };
 
-  // EXPERIMENT (tz-in-view): render the 24h window in the offset held by the plurality of
-  // in-view data (largest group wins). Re-base whenever that differs from the status-quo
-  // default; null means the plurality already matches the default (no re-base needed).
-  getTargetOffset = tzInView => {
-    if (!tzInView || !tzInView.mostPrevalent) return null;
-    const defaultOffset = tzInView.displayOffset;
-    if (!_.isFinite(defaultOffset)) return null;
-    return tzInView.mostPrevalent.offset !== defaultOffset ? tzInView.mostPrevalent.offset : null;
-  };
+  // EXPERIMENT (tz-in-view): window re-base is intentionally disabled — it changed the chart's
+  // timezone per view, which broke scroll/navigation. Instead the data is positioned in device
+  // time (see toDeviceTimeData) while the window stays in the stable document timezone, so
+  // appliedOffset is always null (no window re-base).
+  getTargetOffset = () => null;
 
-  // EXPERIMENT (tz-in-view): return the data/timePrefs the chart should render. When an offset
-  // is applied, re-base a (memoized) copy; otherwise pass the original through unchanged.
-  getEffectiveData = (data, appliedOffset, tzInView) => {
-    if (appliedOffset === null) return { data, timePrefs: _.get(data, 'timePrefs') };
+  // EXPERIMENT (tz-in-view): the chart always renders device-time-positioned data (each datum at
+  // its own device-local time) with the ORIGINAL timePrefs, so scrolling/navigation stays stable
+  // in the document timezone. On single-timezone data this is a no-op; a mixed day shows overlaps
+  // and gaps. (Memoized on the source data reference.)
+  getEffectiveData = data => {
     const cache = this._effectiveCache;
-    if (cache && cache.srcData === data && cache.offset === appliedOffset) return cache.result;
-    const defaultOffset = _.get(tzInView, 'displayOffset', _.get(this.computeTzInView(data), 'displayOffset'));
-    const rebased = rebaseChartData(data, appliedOffset, defaultOffset);
-    const result = { data: rebased, timePrefs: _.get(rebased, 'timePrefs') };
-    this._effectiveCache = { srcData: data, offset: appliedOffset, result };
+    if (cache && cache.srcData === data) return cache.result;
+    const result = { data: toDeviceTimeData(data), timePrefs: _.get(data, 'timePrefs') };
+    this._effectiveCache = { srcData: data, result };
     return result;
   };
 
@@ -503,6 +519,8 @@ class Daily extends Component {
             isSmartOnFhirMode={this.props.isSmartOnFhirMode}
             ref={this.headerRef}
           />
+
+          {this.renderMultiOffsetNotice()}
 
           <Box variant="containers.patientDataInner">
             <Box className="patient-data-content" variant="containers.patientDataContent">
@@ -763,26 +781,60 @@ class Daily extends Component {
   // EXPERIMENT (tz-in-view): small always-on offset note under the date (e.g. "UTC-7") with a
   // hover/focus tooltip explaining which offset is displayed and why. Caution-styled when the
   // 24h window spans more than one timezone.
+  // PROPOSAL MVP #4/#11: report-level disclosure. Shows an informational notice when the loaded
+  // data spans more than one valid timezone offset (#4), and/or when some data has no per-reading
+  // offset and falls back to the single-zone behavior (#11). Copy is per the proposal and must
+  // not imply travel.
+  renderMultiOffsetNotice = () => {
+    const combined = _.get(this.props, 'data.data.combined', []);
+    const clockTypes = ['cbg', 'smbg', 'bolus', 'basal', 'wizard', 'food', 'deviceEvent', 'dosingDecision'];
+    const relevant = _.filter(combined, d => _.includes(clockTypes, d.type));
+    if (!relevant.length) return null;
+
+    const offsets = _.uniq(_.filter(_.map(relevant, 'timezoneOffset'), _.isFinite));
+    const multiOffset = offsets.length > 1;
+    const hasOffsetless = _.some(relevant, d => !_.isFinite(d.timezoneOffset));
+
+    if (!multiOffset && !hasOffsetless) return null;
+
+    return (
+      <Box
+        mx="40px"
+        mt={2}
+        p={2}
+        sx={{ fontSize: 0, lineHeight: 1.4, color: '#33404d', bg: '#eef4fb', border: '1px solid #bcd6f0', borderRadius: '4px' }}
+      >
+        {multiOffset && (
+          <Box>
+            This report contains data recorded under more than one clock setting. Times are shown
+            using the offset associated with each reading or event.
+          </Box>
+        )}
+        {hasOffsetless && (
+          <Box mt={multiOffset ? 1 : 0}>
+            Some data in this report does not include a per-reading clock offset and is displayed
+            using Tidepool’s fallback timezone behavior.
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
   renderTzSubnote = () => {
     if (this.state.hideTzSubnote) return null;
     const tzInView = this.state.tzInView;
-    const displayedOffset = this.state.appliedOffset !== null
-      ? this.state.appliedOffset
-      : _.get(tzInView, 'displayOffset');
-    if (!_.isFinite(displayedOffset)) return null;
-
     const mixed = !!tzInView?.mixed;
-    const offsetLabel = formatOffset(displayedOffset);
     const offsets = _.map(_.get(tzInView, 'rows', []), r => formatOffset(r.offset)).join(', ');
 
-    let why;
-    if (mixed) {
-      why = `This 24-hour window spans multiple time zones (${offsets}). Showing ${offsetLabel}, the majority of the data in view.`;
-    } else if (this.state.appliedOffset !== null) {
-      why = `Showing ${offsetLabel}, the timezone of all data in this 24-hour window.`;
-    } else {
-      why = `Showing ${offsetLabel}, your default timezone (the timezone of your most recent data).`;
-    }
+    // Data is shown in device time, so the note reflects the day's actual offset(s): the single
+    // offset when the day is homogeneous, or the set of offsets present when it spans a change.
+    const primaryOffset = _.get(tzInView, 'mostPrevalent.offset', _.get(tzInView, 'displayOffset'));
+    if (!_.isFinite(primaryOffset)) return null;
+    const offsetLabel = mixed ? offsets : formatOffset(primaryOffset);
+
+    const why = mixed
+      ? `This day spans multiple time zones (${offsets}). Each reading is shown in its own device time, so times near the change may overlap or leave a gap.`
+      : `Showing ${formatOffset(primaryOffset)}, the time zone this day's data was recorded in (device time).`;
 
     const show = () => this.setState({ showTzTooltip: true });
     const hide = () => this.setState({ showTzTooltip: false });
@@ -956,21 +1008,11 @@ class Daily extends Component {
       title: this.getTitle(datetimeLocationEndpoints[1]),
     });
 
-    // EXPERIMENT (tz-in-view): when the chart is re-based to a different offset, it reports its
-    // window in that re-based timezone. The data/fetch layer works in the document timezone, so
-    // translate the datetime back before handing it off — otherwise lazy boundary fetches (and
-    // the chart date range) are misaligned by the offset difference.
-    const endDate = datetimeLocationEndpoints[0].end;
-    const defaultOffset = _.get(this.state.tzInView, 'displayOffset');
-    const endIso = (this.state.appliedOffset !== null && _.isFinite(defaultOffset))
-      ? new Date(endDate.valueOf() + (this.state.appliedOffset - defaultOffset) * MS_IN_MIN).toISOString()
-      : endDate.toISOString();
-
     // Update the chart date range in the data component.
     // We debounce this to avoid excessive updates while panning the view.
     // The debounced function is a stable instance property so that rapid-fire D3 'navigated'
     // events (emitted on every animation frame during a pan) correctly cancel each other.
-    this.debouncedDateRangeUpdate(endIso);
+    this.debouncedDateRangeUpdate(datetimeLocationEndpoints[0].end.toISOString());
   };
 
   handleInTransition = inTransition => {
