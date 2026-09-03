@@ -106,10 +106,14 @@ const LAUNCHDARKLY_FLAG_DEFAULTS = {
   'showRpmReport': false,
   'showSummaryDashboard': false,
   'showSummaryDashboardLastReviewed': false,
-  'showTideDashboard': false,
-  'showTideDashboardLastReviewed': false,
-  'showTideDashboardPatientDrawer': false,
-  'tideDashboardCategories': null,
+  // LOCAL DEV: TIDE flags default on so the dashboard works without a live LaunchDarkly
+  // connection (empty launchDarklyClientToken). TideDashboard.js reads useFlags() directly,
+  // so config/local.js launchDarklyOverrides do not reach it. Revert before committing.
+  'showTideDashboard': true,
+  'showTideDashboardLastReviewed': true,
+  'showTideDashboardPatientDrawer': true,
+  // Non-string value makes useTideDashboardSections fall back to DEFAULT_SECTIONS
+  'tideDashboardCategories': true,
 };
 
 // Configuration Docs: https://launchdarkly.github.io/react-client-sdk/interfaces/ProviderConfig.html

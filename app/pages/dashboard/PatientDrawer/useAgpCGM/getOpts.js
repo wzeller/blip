@@ -5,6 +5,7 @@ import { utils as vizUtils } from '@tidepool/viz';
 import utils from '../../../../core/utils';
 
 const getTimezoneFromTimePrefs = vizUtils.datetime.getTimezoneFromTimePrefs;
+const getLocalizedCeiling = vizUtils.datetime.getLocalizedCeiling;
 
 const getOpts = (
   data, // data from redux (state.blip.data)
@@ -33,36 +34,32 @@ const getOpts = (
 
   const timezoneName = getTimezoneFromTimePrefs(timePrefs);
 
-  const endOfToday = moment.utc().tz(timezoneName).endOf('day').subtract(1, 'ms');
-
-  const setDateRangeToExtents = ({ startDate, endDate }) => ({
-    startDate: startDate ? moment.utc(startDate).tz(timezoneName).startOf('day') : null,
-    endDate: endDate ? moment.utc(endDate).tz(timezoneName).endOf('day').subtract(1, 'ms') : null,
-  });
-
+  // The window end is anchored to the hour ceiling of the most recent CBG datum, rather than to
+  // local midnight, so the queried period matches the hour-bucketed rolling window the backend
+  // summary service uses for the dashboard stats. The first and last calendar days of the window
+  // are therefore usually partial days.
   const getLastNDays = (days, chartType) => {
-    const endDate = get(mostRecentDatumDates, chartType)
-      ? moment.utc(mostRecentDatumDates[chartType])
-      : endOfToday;
+    const anchor = get(mostRecentDatumDates, chartType) || moment.utc().valueOf();
+    const endDate = moment.utc(getLocalizedCeiling(anchor, timePrefs, 'hour').valueOf());
 
-    return setDateRangeToExtents({
-      startDate: moment.utc(endDate).tz(timezoneName).subtract(days - 1, 'days'),
+    return {
+      startDate: moment.utc(endDate).tz(timezoneName).subtract(days, 'days'),
       endDate,
-    });
+    };
   };
 
-  // Get the date range for the current AGP, ending the date of the latest datum
+  // Get the date range for the current AGP, ending at the hour ceiling of the latest datum
   const dates = getLastNDays(agpPeriodInDays, 'agpCGM');
 
-  // Get the date range for the offset AGP, ending the moment before the start of current AGP
+  // Get the date range for the offset AGP, ending at the start of the current AGP window
   const offsetDates = {
     startDate: dates.startDate.clone().subtract(agpPeriodInDays, 'days'),
-    endDate: dates.startDate.clone().subtract(1, 'ms'),
+    endDate: dates.startDate.clone(),
   };
 
   const formatDateEndpoints = ({ startDate, endDate }) => (startDate && endDate ? [
     startDate.valueOf(),
-    moment.utc(endDate).tz(timezoneName).add(1, 'day').startOf('day').valueOf(),
+    endDate.valueOf(),
   ] : []);
 
   const opts = {

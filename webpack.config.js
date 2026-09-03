@@ -22,6 +22,7 @@ const isProd = (process.env.NODE_ENV === 'production');
 const linkedPackages = (isDev || isTest) ? _.get(optional('./config/local'), 'linkedPackages', {}) : {};
 const apiHost = _.get(optional('./config/local'), 'apiHost', process.env.API_HOST || null);
 const uploadApi = _.get(optional('./config/local'), 'uploadApi', process.env.UPLOAD_API || null);
+const apiProxyTarget = _.get(optional('./config/local'), 'apiProxyTarget', process.env.API_PROXY_TARGET || null);
 const launchDarklyClientToken = _.get(optional('./config/local'), 'launchDarklyClientToken', process.env.LAUNCHDARKLY_CLIENT_TOKEN || null);
 const featureFlags = _.get(optional('./config/local'), 'featureFlags', {
   i18nEnabled: process.env.I18N_ENABLED || false,
@@ -252,6 +253,38 @@ module.exports = {
     static: { publicPath: output.publicPath },
     historyApiFallback: true,
     hot: isDev,
+    // Environments that don't send CORS headers for localhost origins (e.g. prd) can only be
+    // reached same-origin: with apiProxyTarget set, platform API paths are forwarded server-side
+    ...(apiProxyTarget && {
+      proxy: [{
+        context: [
+          '/access', '/auth', '/authorize', '/blobs', '/confirm', '/data', '/data_sets',
+          '/data_sources', '/datasets', '/export', '/info', '/message', '/metadata',
+          '/metrics', '/users', '/v1',
+        ],
+        target: apiProxyTarget,
+        changeOrigin: true,
+        // Temporary debug logging for TIDE dashboard requests: captures query params and
+        // response bodies to /tmp/tide-proxy.log. Remove when done diagnosing.
+        onProxyReq: (proxyReq, req) => {
+          if (/tide/i.test(req.url) || /^\/data\//.test(req.url)) proxyReq.removeHeader('accept-encoding');
+        },
+        onProxyRes: (proxyRes, req) => {
+          if (!(/tide/i.test(req.url) || /^\/data\//.test(req.url))) return;
+          const chunks = [];
+          proxyRes.on('data', c => chunks.push(c));
+          proxyRes.on('end', () => {
+            require('fs').appendFileSync('/tmp/tide-proxy.log', JSON.stringify({
+              time: new Date().toISOString(),
+              method: req.method,
+              url: req.url,
+              status: proxyRes.statusCode,
+              body: Buffer.concat(chunks).toString('utf8').slice(0, 20000000),
+            }) + '\n');
+          });
+        },
+      }],
+    }),
     client: {
       logging: 'info',
       overlay: {

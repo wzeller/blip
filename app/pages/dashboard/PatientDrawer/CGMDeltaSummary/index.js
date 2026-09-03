@@ -8,7 +8,7 @@ const { bankersRound } = vizUtils.stat;
 const { getTimezoneFromTimePrefs } = vizUtils.datetime;
 import { MS_IN_HOUR } from '../../../../core/constants';
 
-import getReportDaysText from '../getReportDaysText';
+import getReportDaysText, { getDaysWornCount } from '../getReportDaysText';
 
 // TODO: Import these colors from viz AGPConstants once that is exported from viz
 const AGPColors = {
@@ -91,7 +91,7 @@ const getRenderedValues = (agpCGM, offsetAgpCGM, t) => {
 
   const timezone = getTimezoneFromTimePrefs(timePrefs);
   const dateRange  = getReportDaysText(newestDatum, oldestDatum, bgDaysWorn, timezone);
-  const roundedBgDaysWorn = bankersRound(bgDaysWorn, 0);
+  const roundedBgDaysWorn = getDaysWornCount(newestDatum, oldestDatum, bankersRound(bgDaysWorn, 0));
 
   // Current Period Values
   const timeInVeryHighFraction = _.toNumber(counts.veryHigh || 0) / counts.total;

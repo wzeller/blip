@@ -6,7 +6,7 @@ import { utils as vizUtils } from '@tidepool/viz';
 const { formatDatum, bankersRound } = vizUtils.stat;
 const { getTimezoneFromTimePrefs } = vizUtils.datetime;
 import { MGDL_UNITS } from '../../../../core/constants';
-import getReportDaysText from '../getReportDaysText';
+import getReportDaysText, { getDaysWornCount } from '../getReportDaysText';
 
 const TableRow = ({ label, sublabel, value, units, id }) => {
   return (
@@ -70,7 +70,7 @@ const CGMStatistics = ({ agpCGM }) => {
   const gmi        = formatDatum({ value: glucoseManagementIndicatorAGP }, 'gmi', { bgPrefs, useAGPFormat: true });
   const cov        = formatDatum({ value: coefficientOfVariation }, 'cv', { bgPrefs, useAGPFormat: true });
 
-  const roundedBgDaysWorn = bankersRound(bgDaysWorn, 0);
+  const roundedBgDaysWorn = getDaysWornCount(newestDatum, oldestDatum, bankersRound(bgDaysWorn, 0));
 
   return (
     <Flex sx={{ alignItems: 'center', width: '100%', height: '100%' }} id='agp-cgm-statistics'>
