@@ -161,6 +161,7 @@ const DailyChart = withTranslation(null, { withRef: true })(class DailyChart ext
     this.chartOpts = [
       'automatedBasal',
       'automatedBolus',
+      'cgmBackfill',
       'bgClasses',
       'bgUnits',
       'bolusRatio',
@@ -681,6 +682,11 @@ class Daily extends Component {
       { oneMinCgmSampleInterval: true }
     );
 
+    const hasCgmBackfill = _.some(
+      _.get(this.props, 'data.data.combined'),
+      d => d.type === 'cbg' && _.some(d.annotations, { code: 'cbg/backfilled' })
+    );
+
     if (hasCarbExchanges) carbUnits.push('exchanges');
 
     return (
@@ -739,6 +745,7 @@ class Daily extends Component {
             automatedBasal={isAutomatedBasalDevice}
             automatedBolus={isAutomatedBolusDevice}
             insulinBolus={hasInsulinData}
+            cgmBackfill={hasCgmBackfill}
             bgClasses={bgPrefs.bgClasses}
             bgUnits={bgPrefs.bgUnits}
             bolusRatio={this.props.chartPrefs.bolusRatio}
